@@ -11,13 +11,13 @@ export default defineConfig({
     },
     outDir: 'dist/worker',
     emptyOutDir: true,
-    rollupOptions: {
-      external: ['sip.js'],
-      output: {
-        globals: {
-          'sip.js': 'SIP'
-        }
-      }
-    }
+    // rollupOptions: {
+    //   external: ['sip.js'],
+    //   output: {
+    //     globals: {
+    //       'sip.js': 'SIP'
+    //     }
+    //   }
+    // }
   }
 }); 

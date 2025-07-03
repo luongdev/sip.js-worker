@@ -1,48 +1,480 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SIP Worker Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIP Worker Client Demo - With Media Handler</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            height: 100vh;
+        }
+        
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        
+        .status {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ccc;
+        }
+        
+        .status-dot.connected { background: #4CAF50; }
+        .status-dot.registered { background: #2196F3; }
+        .status-dot.calling { background: #FF9800; }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input, button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #1976D2;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .call-controls {
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+        
+        .media-controls {
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+        
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: #f9f9f9;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .log-timestamp {
+            color: #666;
+            margin-right: 10px;
+        }
+        
+        .log-level-info { color: #2196F3; }
+        .log-level-warn { color: #FF9800; }
+        .log-level-error { color: #f44336; }
+        .log-level-debug { color: #4CAF50; }
+
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
-  <h1>SIP Worker Test</h1>
-  <div id="status">Connecting to worker...</div>
-  <button id="testBtn">Send Test Message</button>
-  <div id="messages"></div>
+    <div class="container">
+        <!-- Cấu hình và Controls -->
+        <div class="section">
+            <h2>SIP Worker Client - Media Demo</h2>
+            
+            <!-- Status -->
+            <div class="status">
+                <div class="status-item">
+                    <div class="status-dot" id="worker-status"></div>
+                    <span>Worker: <span id="worker-text">Disconnected</span></span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" id="sip-status"></div>
+                    <span>SIP: <span id="sip-text">Unregistered</span></span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" id="call-status"></div>
+                    <span>Call: <span id="call-text">None</span></span>
+                </div>
+            </div>
 
-  <script type="module">
-    // Import worker
-    const worker = new SharedWorker('./dist/worker/sip-worker.worker.js', { type: 'module' });
-    const statusEl = document.getElementById('status');
-    const messagesEl = document.getElementById('messages');
-    const testBtn = document.getElementById('testBtn');
+            <!-- Tab Info -->
+            <div class="form-group">
+                <label>Tab ID:</label>
+                <input type="text" id="tab-id" readonly>
+            </div>
+            
+            <!-- SIP Configuration -->
+            <div class="form-group">
+                <label for="sip-uri">SIP URI:</label>
+                <input type="text" id="sip-uri" placeholder="sip:1000@sip.example.com" value="sip:100000@devopt.metechvn.com">
+            </div>
+            
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" placeholder="1000" value="100000">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" placeholder="password" value="MDExNDdmNDE5MGQwMTkyMzk=">
+            </div>
+            
+            <div class="form-group">
+                <label for="websocket-server">WebSocket Server:</label>
+                <input type="text" id="websocket-server" placeholder="wss://sip.example.com:7443" value="wss://proxy-dev.metechvn.com:7443">
+            </div>
+            
+            <button id="register-btn">Register</button>
+            <button id="unregister-btn" disabled>Unregister</button>
 
-    // Handle messages from worker
-    worker.port.onmessage = (event) => {
-      console.log('Message from worker:', event.data);
-      const msgEl = document.createElement('div');
-      msgEl.textContent = `Worker: ${event.data}`;
-      messagesEl.appendChild(msgEl);
-      
-      if (event.data === 'Connected to SIP Worker') {
-        statusEl.textContent = 'Connected to SIP Worker';
-        statusEl.style.color = 'green';
-      }
-    };
+            <!-- Call Controls -->
+            <div class="call-controls">
+                <h3>Call Controls</h3>
+                <div class="form-group">
+                    <label for="target-uri">Target URI:</label>
+                    <input type="text" id="target-uri" placeholder="sip:2000@sip.example.com" value="sip:2000@192.168.1.100">
+                </div>
+                
+                <button id="make-call-btn" disabled>Make Call</button>
+                <button id="hang-up-btn" disabled>Hang Up</button>
+            </div>
 
-    // Start the connection
-    worker.port.start();
+            <!-- Media Controls -->
+            <div class="media-controls">
+                <h3>Media Controls</h3>
+                <button id="request-media-btn">Request Media Permission</button>
+                <div class="audio-controls">
+                    <label>
+                        <input type="checkbox" id="mute-audio" disabled> Mute Audio
+                    </label>
+                </div>
+                
+                <!-- Local Audio -->
+                <div>
+                    <label>Local Audio:</label>
+                    <audio id="local-audio" controls muted autoplay></audio>
+                </div>
+                
+                <!-- Remote Audio -->
+                <div>
+                    <label>Remote Audio:</label>
+                    <audio id="remote-audio" controls autoplay></audio>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Logs -->
+        <div class="section">
+            <h2>Logs</h2>
+            <button onclick="clearLogs()">Clear Logs</button>
+            <div id="log-container" class="log-container"></div>
+        </div>
+    </div>
 
-    // Test button
-    testBtn.addEventListener('click', () => {
-      const message = `Test message from client: ${new Date().toISOString()}`;
-      worker.port.postMessage(message);
-      
-      const msgEl = document.createElement('div');
-      msgEl.textContent = `Client: ${message}`;
-      messagesEl.appendChild(msgEl);
-    });
-  </script>
+    <script type="module">
+        // Import the real SipWorkerClient
+        import { SipWorkerClient } from '/src/client/sip-worker-client.ts';
+        
+                // Global variables
+        let sipClient = null;
+        let currentCallId = null;
+
+        // DOM elements
+        const elements = {
+            tabId: document.getElementById('tab-id'),
+            sipUri: document.getElementById('sip-uri'),
+            username: document.getElementById('username'),
+            password: document.getElementById('password'),
+            websocketServer: document.getElementById('websocket-server'),
+            targetUri: document.getElementById('target-uri'),
+            registerBtn: document.getElementById('register-btn'),
+            unregisterBtn: document.getElementById('unregister-btn'),
+            makeCallBtn: document.getElementById('make-call-btn'),
+            hangUpBtn: document.getElementById('hang-up-btn'),
+            requestMediaBtn: document.getElementById('request-media-btn'),
+            muteAudio: document.getElementById('mute-audio'),
+            localAudio: document.getElementById('local-audio'),
+            remoteAudio: document.getElementById('remote-audio'),
+            workerStatus: document.getElementById('worker-status'),
+            workerText: document.getElementById('worker-text'),
+            sipStatus: document.getElementById('sip-status'),
+            sipText: document.getElementById('sip-text'),
+            callStatus: document.getElementById('call-status'),
+            callText: document.getElementById('call-text')
+        };
+
+        // Initialize client
+        function initClient() {
+            try {
+                sipClient = new SipWorkerClient();
+                elements.tabId.value = sipClient.getTabId();
+                
+                // Register event handlers
+                sipClient.on('worker_ready', handleWorkerReady);
+                sipClient.on('sip_registered', handleSipRegistered);
+                sipClient.on('sip_unregistered', handleSipUnregistered);
+                sipClient.on('sip_registration_failed', handleSipRegistrationFailed);
+                sipClient.on('call_progress', handleCallProgress);
+                sipClient.on('call_terminated', handleCallTerminated);
+                sipClient.on('log', handleLog);
+                
+                log('info', 'SipWorkerClient initialized with SharedWorker');
+            } catch (error) {
+                log('error', `Failed to initialize client: ${error.message}`);
+            }
+        }
+
+        // Event handlers
+        function handleWorkerReady(message) {
+            updateWorkerStatus(true);
+            log('info', 'Worker connected');
+        }
+
+        function handleSipRegistered(message) {
+            updateSipStatus(true);
+            elements.registerBtn.disabled = true;
+            elements.unregisterBtn.disabled = false;
+            elements.makeCallBtn.disabled = false;
+            log('info', 'SIP registered successfully');
+        }
+
+        function handleSipUnregistered(message) {
+            updateSipStatus(false);
+            elements.registerBtn.disabled = false;
+            elements.unregisterBtn.disabled = true;
+            elements.makeCallBtn.disabled = true;
+            log('info', 'SIP unregistered');
+        }
+
+        function handleSipRegistrationFailed(message) {
+            updateSipStatus(false);
+            elements.registerBtn.disabled = false;
+            elements.unregisterBtn.disabled = true;
+            elements.makeCallBtn.disabled = true;
+            log('error', `SIP registration failed: ${message.data?.error || 'Unknown error'}`);
+        }
+
+        function handleCallProgress(message) {
+            const callInfo = message.data;
+            if (callInfo) {
+                currentCallId = callInfo.id;
+                updateCallStatus(callInfo.state);
+                log('info', `Call ${callInfo.id}: ${callInfo.state}`);
+                
+                if (callInfo.state === 'established') {
+                    elements.hangUpBtn.disabled = false;
+                    elements.makeCallBtn.disabled = true;
+                }
+            }
+        }
+
+        function handleCallTerminated(message) {
+            const callInfo = message.data;
+            if (callInfo) {
+                updateCallStatus('none');
+                elements.hangUpBtn.disabled = true;
+                elements.makeCallBtn.disabled = false;
+                currentCallId = null;
+                log('info', `Call ${callInfo.id} terminated`);
+                
+                // Clear audio streams
+                elements.localAudio.srcObject = null;
+                elements.remoteAudio.srcObject = null;
+            }
+        }
+
+        function handleLog(message) {
+            const logData = message.data;
+            if (logData) {
+                log(logData.level, logData.message);
+            }
+        }
+
+        // UI update functions
+        function updateWorkerStatus(connected) {
+            elements.workerStatus.className = `status-dot ${connected ? 'connected' : ''}`;
+            elements.workerText.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        function updateSipStatus(registered) {
+            elements.sipStatus.className = `status-dot ${registered ? 'registered' : ''}`;
+            elements.sipText.textContent = registered ? 'Registered' : 'Unregistered';
+        }
+
+        function updateCallStatus(state) {
+            elements.callStatus.className = `status-dot ${state !== 'none' ? 'calling' : ''}`;
+            elements.callText.textContent = state === 'none' ? 'None' : state;
+        }
+
+        // Button handlers
+        elements.registerBtn.addEventListener('click', () => {
+            const sipConfig = {
+                uri: elements.sipUri.value,
+                username: elements.username.value,
+                password: elements.password.value,
+                displayName: elements.username.value
+            };
+            
+            const transportConfig = {
+                server: elements.websocketServer.value,
+                secure: elements.websocketServer.value.startsWith('wss'),
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' }
+                ]
+            };
+            
+            sipClient.register(sipConfig, transportConfig);
+            elements.registerBtn.disabled = true;
+            log('info', 'Registering SIP...');
+        });
+
+        elements.unregisterBtn.addEventListener('click', () => {
+            sipClient.unregister();
+            elements.unregisterBtn.disabled = true;
+            log('info', 'Unregistering SIP...');
+        });
+
+        elements.makeCallBtn.addEventListener('click', () => {
+            const targetUri = elements.targetUri.value;
+            if (targetUri) {
+                sipClient.makeCall(targetUri);
+                elements.makeCallBtn.disabled = true;
+                log('info', `Making call to ${targetUri}...`);
+            }
+        });
+
+        elements.hangUpBtn.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.emit('call_terminated', {
+                    id: currentCallId,
+                    state: 'terminated'
+                });
+                log('info', 'Call terminated');
+            }
+        });
+
+        elements.requestMediaBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: false 
+                });
+                
+                elements.localAudio.srcObject = stream;
+                sipClient.updateMediaPermission('GRANTED');
+                elements.muteAudio.disabled = false;
+                
+                log('info', 'Media permission granted');
+            } catch (error) {
+                sipClient.updateMediaPermission('DENIED');
+                log('error', `Media permission denied: ${error.message}`);
+            }
+        });
+
+        elements.muteAudio.addEventListener('change', (e) => {
+            const stream = elements.localAudio.srcObject;
+            if (stream) {
+                stream.getAudioTracks().forEach(track => {
+                    track.enabled = !e.target.checked;
+                });
+                log('info', `Audio ${e.target.checked ? 'muted' : 'unmuted'}`);
+            }
+        });
+
+        // Logging function
+        function log(level, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logContainer = document.getElementById('log-container');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `
+                <span class="log-timestamp">${timestamp}</span>
+                <span class="log-level-${level}">[${level.toUpperCase()}]</span>
+                <span>${message}</span>
+            `;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Clear logs function
+        window.clearLogs = function() {
+            document.getElementById('log-container').innerHTML = '';
+        };
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initClient);
+
+        // Cleanup on unload
+        window.addEventListener('beforeunload', () => {
+            if (sipClient) {
+                sipClient.cleanup();
+            }
+        });
+    </script>
 </body>
-</html>
+</html> 

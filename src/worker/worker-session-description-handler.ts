@@ -48,12 +48,53 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       throw new Error('SessionDescriptionHandler is closed');
     }
 
-    // For now, return a placeholder SDP
-    // In real implementation, this would delegate to the selected tab
-    return {
-      body: 'v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n',
-      contentType: 'application/sdp'
+    // Get the best tab to handle media
+    const selectedTab = await this.tabManager.getSelectedTab();
+    if (!selectedTab) {
+      throw new Error('No tab available for media handling');
+    }
+
+    this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id}`);
+
+    // Send media request to tab
+    const mediaRequest: SipWorker.MediaRequest = {
+      sessionId: this.sessionId,
+      type: 'offer',
+      constraints: {
+        audio: true,
+        video: false
+      }
     };
+
+    const request: SipWorker.Message<SipWorker.MediaRequest> = {
+      type: SipWorker.MessageType.MEDIA_GET_OFFER,
+      id: `media-offer-${Date.now()}`,
+      timestamp: Date.now(),
+      data: mediaRequest
+    };
+
+    try {
+      const response = await this.messageBroker.request(selectedTab.id, request, 10000);
+      
+      if (response.error) {
+        throw new Error(`Failed to get offer: ${response.error.message}`);
+      }
+
+      const sdp = response.data?.sdp;
+      if (!sdp) {
+        throw new Error('No SDP received from tab');
+      }
+
+      this.logger.debug(`Received SDP offer from tab: ${sdp.substring(0, 100)}...`);
+
+      return {
+        body: sdp,
+        contentType: 'application/sdp'
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get description: ${error}`);
+      throw error;
+    }
   }
 
   /**
@@ -96,9 +137,40 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       throw new Error('SessionDescriptionHandler is closed');
     }
 
-    // For now, just log the SDP
-    // In real implementation, this would delegate to the selected tab
-    this.logger.debug(`Received SDP: ${sdp}`);
+    // Get the best tab to handle media
+    const selectedTab = await this.tabManager.getSelectedTab();
+    if (!selectedTab) {
+      throw new Error('No tab available for media handling');
+    }
+
+    this.logger.debug(`Setting remote SDP for tab: ${selectedTab.id}`);
+
+    // Send remote SDP to tab
+    const mediaRequest: SipWorker.MediaRequest = {
+      sessionId: this.sessionId,
+      type: 'set-remote-sdp',
+      sdp: sdp
+    };
+
+    const request: SipWorker.Message<SipWorker.MediaRequest> = {
+      type: SipWorker.MessageType.MEDIA_SET_REMOTE_SDP,
+      id: `media-remote-sdp-${Date.now()}`,
+      timestamp: Date.now(),
+      data: mediaRequest
+    };
+
+    try {
+      const response = await this.messageBroker.request(selectedTab.id, request, 10000);
+      
+      if (response.error) {
+        throw new Error(`Failed to set remote SDP: ${response.error.message}`);
+      }
+
+      this.logger.debug(`Remote SDP set successfully on tab: ${selectedTab.id}`);
+    } catch (error) {
+      this.logger.error(`Failed to set remote description: ${error}`);
+      throw error;
+    }
   }
 }
 

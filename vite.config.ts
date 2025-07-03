@@ -15,7 +15,8 @@ export default defineConfig({
         globals: {
           'sip.js': 'SIP'
         }
-      }
+      },
+      treeshake: false
     }
   }
 }); 
