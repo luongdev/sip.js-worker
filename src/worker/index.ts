@@ -139,6 +139,42 @@ function registerMessageHandlers() {
     }
     return { success: false, error: 'SIP not initialized' };
   });
+
+  // Handler cho ICE candidate từ tab
+  messageBroker.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message, tabId, port) => {
+    console.log('Worker received ICE candidate from tab:', tabId, message.data);
+    
+    if (sipCore) {
+      // Forward ICE candidate tới SIP Core để gửi tới remote peer
+      // TODO: Implement ICE candidate forwarding in SipCore
+      return { success: true, message: 'ICE candidate received' };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho session ready từ tab  
+  messageBroker.on(SipWorker.MessageType.MEDIA_SESSION_READY, async (message, tabId, port) => {
+    console.log('Worker received session ready from tab:', tabId, message.data);
+    
+    if (sipCore) {
+      // Notify SIP Core that media session is ready
+      // TODO: Implement session ready handling in SipCore
+      return { success: true, message: 'Session ready received' };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho session failed từ tab
+  messageBroker.on(SipWorker.MessageType.MEDIA_SESSION_FAILED, async (message, tabId, port) => {
+    console.log('Worker received session failed from tab:', tabId, message.data);
+    
+    if (sipCore) {
+      // Notify SIP Core that media session failed
+      // TODO: Implement session failed handling in SipCore
+      return { success: true, message: 'Session failed received' };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
   
   // Handler cho tin nhắn PING
   messageBroker.on(SipWorker.MessageType.PING, async (message, tabId, port) => {

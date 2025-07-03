@@ -11,43 +11,98 @@ export interface MediaHandlerCallbacks {
 }
 
 /**
- * MediaHandler class để xử lý các media requests từ worker
+ * Configuration cho MediaHandler, inspired by SIP.js SessionDescriptionHandlerConfiguration
+ */
+export interface MediaHandlerConfiguration {
+  /**
+   * ICE gathering timeout (ms)
+   */
+  iceGatheringTimeout?: number;
+  
+  /**
+   * RTCPeerConnection configuration
+   */
+  peerConnectionConfiguration?: RTCConfiguration;
+  
+  /**
+   * Default media constraints
+   */
+  defaultConstraints?: MediaStreamConstraints;
+}
+
+/**
+ * Session state để track trạng thái của mỗi session
+ */
+interface SessionState {
+  peerConnection: RTCPeerConnection;
+  localStream?: MediaStream;
+  remoteStream?: MediaStream;
+  localDescription?: RTCSessionDescriptionInit;
+  remoteDescription?: RTCSessionDescriptionInit;
+  iceCandidatesQueue: RTCIceCandidateInit[];
+  iceGatheringComplete: boolean;
+  iceGatheringPromise?: Promise<void>;
+  iceGatheringResolve?: () => void;
+  iceGatheringReject?: (error: Error) => void;
+  iceGatheringTimeoutId?: number;
+}
+
+/**
+ * MediaHandler class inspired by SIP.js SessionDescriptionHandler
+ * Handles media negotiation between tab and worker with proper WebRTC workflow
  */
 export class MediaHandler {
-  private peerConnections: Map<string, RTCPeerConnection> = new Map();
-  private localStreams: Map<string, MediaStream> = new Map();
-  private iceCandidateQueue: Map<string, RTCIceCandidateInit[]> = new Map();
+  private sessions: Map<string, SessionState> = new Map();
   private callbacks: MediaHandlerCallbacks | null = null;
+  private configuration: MediaHandlerConfiguration;
 
   /**
-   * Khởi tạo MediaHandler
+   * Default configuration inspired by SIP.js defaults
    */
-  constructor(callbacks?: MediaHandlerCallbacks) {
+  private static readonly DEFAULT_CONFIG: MediaHandlerConfiguration = {
+    iceGatheringTimeout: 5000,
+    peerConnectionConfiguration: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ],
+      bundlePolicy: 'balanced',
+      rtcpMuxPolicy: 'require'
+    },
+    defaultConstraints: {
+      audio: true,
+      video: false
+    }
+  };
+
+  /**
+   * Constructor
+   */
+  constructor(callbacks?: MediaHandlerCallbacks, configuration?: MediaHandlerConfiguration) {
     this.callbacks = callbacks || null;
-    console.log('MediaHandler initialized');
+    this.configuration = { ...MediaHandler.DEFAULT_CONFIG, ...configuration };
+    console.log('MediaHandler initialized with SIP.js-inspired workflow');
   }
 
   /**
-   * Set callbacks cho MediaHandler
+   * Set callbacks for MediaHandler
    */
   public setCallbacks(callbacks: MediaHandlerCallbacks): void {
     this.callbacks = callbacks;
   }
 
   /**
-   * Xử lý media request từ worker
-   * @param request Media request
-   * @returns Media response
+   * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
   public async handleMediaRequest(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    console.log('Handling media request:', request);
+    console.log('Handling media request:', request.type, 'for session:', request.sessionId);
 
     try {
       switch (request.type) {
         case 'offer':
-          return await this.createOffer(request);
+          return await this.createOfferDescription(request);
         case 'answer':
-          return await this.createAnswer(request);
+          return await this.createAnswerDescription(request);
         case 'set-remote-sdp':
           return await this.setRemoteDescription(request);
         case 'ice-candidate':
@@ -57,6 +112,7 @@ export class MediaHandler {
       }
     } catch (error: any) {
       console.error('Media request failed:', error);
+      this.sendSessionFailedToWorker(request.sessionId, error.message);
       return {
         sessionId: request.sessionId,
         success: false,
@@ -66,73 +122,93 @@ export class MediaHandler {
   }
 
   /**
-   * Tạo offer SDP
+   * Create offer description - inspired by SIP.js getDescription() for offers
    */
-  private async createOffer(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
+  private async createOfferDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
     const { sessionId, constraints } = request;
 
-    // Tạo PeerConnection mới
-    const peerConnection = this.createPeerConnection(sessionId);
+    // Create or get session state
+    let sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      sessionState = await this.createSession(sessionId);
+    }
 
-    // Lấy user media stream
-    const stream = await this.getUserMedia(constraints || { audio: true, video: false });
-    this.localStreams.set(sessionId, stream);
+    // Get local media stream (similar to SIP.js getLocalMediaStream)
+    await this.getLocalMediaStream(sessionState, constraints);
 
-    // Thêm tracks vào PeerConnection
-    stream.getTracks().forEach(track => {
-      peerConnection.addTrack(track, stream);
-    });
+    // Create local offer (similar to SIP.js createLocalOfferOrAnswer)
+    const offer = await this.createLocalOffer(sessionState);
+    
+    // Set local description
+    await this.setLocalDescription(sessionState, offer);
+    
+    // Wait for ICE gathering to complete (like SIP.js waitForIceGatheringComplete)
+    await this.waitForIceGatheringComplete(sessionState);
+    
+    // Get final local description with ICE candidates
+    const finalDescription = sessionState.peerConnection.localDescription;
+    if (!finalDescription?.sdp) {
+      throw new Error('Failed to get local description');
+    }
 
-    // Tạo offer
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+    sessionState.localDescription = finalDescription;
 
-    console.log('Created offer for session:', sessionId);
+    console.log('Created offer description for session:', sessionId);
 
     return {
       sessionId,
       success: true,
-      sdp: offer.sdp
+      sdp: finalDescription.sdp
     };
   }
 
   /**
-   * Tạo answer SDP
+   * Create answer description - inspired by SIP.js getDescription() for answers
    */
-  private async createAnswer(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
+  private async createAnswerDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
     const { sessionId, constraints } = request;
 
-    const peerConnection = this.peerConnections.get(sessionId);
-    if (!peerConnection) {
-      throw new Error(`No PeerConnection found for session: ${sessionId}`);
+    const sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      throw new Error(`No session found for sessionId: ${sessionId}`);
     }
 
-    // Lấy user media stream nếu chưa có
-    if (!this.localStreams.has(sessionId)) {
-      const stream = await this.getUserMedia(constraints || { audio: true, video: false });
-      this.localStreams.set(sessionId, stream);
-
-      // Thêm tracks vào PeerConnection
-      stream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, stream);
-      });
+    // Ensure we have remote description set first
+    if (!sessionState.remoteDescription) {
+      throw new Error('Cannot create answer without remote description');
     }
 
-    // Tạo answer
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
+    // Get local media stream
+    await this.getLocalMediaStream(sessionState, constraints);
 
-    console.log('Created answer for session:', sessionId);
+    // Create local answer
+    const answer = await this.createLocalAnswer(sessionState);
+    
+    // Set local description
+    await this.setLocalDescription(sessionState, answer);
+    
+    // Wait for ICE gathering
+    await this.waitForIceGatheringComplete(sessionState);
+    
+    // Get final description
+    const finalDescription = sessionState.peerConnection.localDescription;
+    if (!finalDescription?.sdp) {
+      throw new Error('Failed to get local answer description');
+    }
+
+    sessionState.localDescription = finalDescription;
+
+    console.log('Created answer description for session:', sessionId);
 
     return {
       sessionId,
       success: true,
-      sdp: answer.sdp
+      sdp: finalDescription.sdp
     };
   }
 
   /**
-   * Set remote description
+   * Set remote description - inspired by SIP.js setDescription()
    */
   private async setRemoteDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
     const { sessionId, sdp } = request;
@@ -141,26 +217,39 @@ export class MediaHandler {
       throw new Error('SDP is required for set-remote-sdp request');
     }
 
-    let peerConnection = this.peerConnections.get(sessionId);
-    if (!peerConnection) {
-      // Tạo PeerConnection mới nếu chưa có (incoming call)
-      peerConnection = this.createPeerConnection(sessionId);
+    let sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      // Create session for incoming call
+      sessionState = await this.createSession(sessionId);
     }
 
+    // Determine SDP type based on current signaling state (like SIP.js)
+    const pc = sessionState.peerConnection;
+    let type: RTCSdpType;
+    
+    switch (pc.signalingState) {
+      case 'stable':
+        // If we are stable, this should be a remote offer
+        type = 'offer';
+        break;
+      case 'have-local-offer':
+        // If we made an offer, this should be a remote answer
+        type = 'answer';
+        break;
+      default:
+        throw new Error(`Invalid signaling state for setRemoteDescription: ${pc.signalingState}`);
+    }
+
+    const remoteDescription: RTCSessionDescriptionInit = { type, sdp };
+    
     // Set remote description
-    await peerConnection.setRemoteDescription({
-      type: sdp.includes('a=sendrecv') ? 'offer' : 'answer',
-      sdp: sdp
-    });
+    await pc.setRemoteDescription(remoteDescription);
+    sessionState.remoteDescription = remoteDescription;
 
     // Process queued ICE candidates
-    const queuedCandidates = this.iceCandidateQueue.get(sessionId) || [];
-    for (const candidate of queuedCandidates) {
-      await peerConnection.addIceCandidate(candidate);
-    }
-    this.iceCandidateQueue.delete(sessionId);
+    await this.processQueuedIceCandidates(sessionState);
 
-    console.log('Set remote description for session:', sessionId);
+    console.log('Set remote description for session:', sessionId, 'type:', type);
 
     return {
       sessionId,
@@ -178,17 +267,26 @@ export class MediaHandler {
       throw new Error('ICE candidate is required');
     }
 
-    const peerConnection = this.peerConnections.get(sessionId);
-    if (!peerConnection) {
-      // Queue candidate if PeerConnection not ready yet
-      if (!this.iceCandidateQueue.has(sessionId)) {
-        this.iceCandidateQueue.set(sessionId, []);
+    const sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      throw new Error(`No session found for sessionId: ${sessionId}`);
+    }
+
+    const pc = sessionState.peerConnection;
+    
+    // Check if we can add the candidate now or need to queue it
+    if (pc.remoteDescription) {
+      try {
+        await pc.addIceCandidate(candidate);
+        console.log('Added ICE candidate for session:', sessionId);
+      } catch (error) {
+        console.warn('Failed to add ICE candidate:', error);
+        // Non-fatal error, continue
       }
-      this.iceCandidateQueue.get(sessionId)!.push(candidate);
-      console.log('Queued ICE candidate for session:', sessionId);
     } else {
-      await peerConnection.addIceCandidate(candidate);
-      console.log('Added ICE candidate for session:', sessionId);
+      // Queue candidate for later processing
+      sessionState.iceCandidatesQueue.push(candidate);
+      console.log('Queued ICE candidate for session:', sessionId);
     }
 
     return {
@@ -198,106 +296,224 @@ export class MediaHandler {
   }
 
   /**
-   * Tạo PeerConnection mới
+   * Create a new session state - like SIP.js constructor
    */
-  private createPeerConnection(sessionId: string): RTCPeerConnection {
-    const configuration: RTCConfiguration = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+  private async createSession(sessionId: string): Promise<SessionState> {
+    console.log('Creating new session:', sessionId);
+
+    const peerConnection = new RTCPeerConnection(this.configuration.peerConnectionConfiguration);
+    
+    const sessionState: SessionState = {
+      peerConnection,
+      iceCandidatesQueue: [],
+      iceGatheringComplete: false
     };
 
-    const peerConnection = new RTCPeerConnection(configuration);
+    // Set up event handlers (inspired by SIP.js initPeerConnectionEventHandlers)
+    this.initPeerConnectionEventHandlers(sessionState, sessionId);
 
-    // Setup event listeners
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        // Send ICE candidate to worker
-        this.sendIceCandidateToWorker(sessionId, event.candidate);
-      }
-    };
-
-    peerConnection.onconnectionstatechange = () => {
-      console.log(`PeerConnection state for ${sessionId}:`, peerConnection.connectionState);
-      
-      if (peerConnection.connectionState === 'connected') {
-        this.sendSessionReadyToWorker(sessionId);
-      } else if (peerConnection.connectionState === 'failed') {
-        this.sendSessionFailedToWorker(sessionId, 'PeerConnection failed');
-      }
-    };
-
-    peerConnection.ontrack = (event) => {
-      console.log('Received remote track for session:', sessionId);
-      // Handle remote media stream
-      this.handleRemoteStream(sessionId, event.streams[0]);
-    };
-
-    this.peerConnections.set(sessionId, peerConnection);
-    return peerConnection;
+    this.sessions.set(sessionId, sessionState);
+    return sessionState;
   }
 
   /**
-   * Lấy user media
+   * Initialize PeerConnection event handlers - inspired by SIP.js
    */
-  private async getUserMedia(constraints: SipWorker.MediaConstraints): Promise<MediaStream> {
+  private initPeerConnectionEventHandlers(sessionState: SessionState, sessionId: string): void {
+    const pc = sessionState.peerConnection;
+
+    // ICE candidate handler
+    pc.addEventListener('icecandidate', (event) => {
+      if (event.candidate) {
+        this.sendIceCandidateToWorker(sessionId, event.candidate);
+      } else {
+        // ICE gathering complete
+        sessionState.iceGatheringComplete = true;
+        if (sessionState.iceGatheringResolve) {
+          sessionState.iceGatheringResolve();
+        }
+      }
+    });
+
+    // ICE connection state change
+    pc.addEventListener('iceconnectionstatechange', () => {
+      console.log('ICE connection state:', pc.iceConnectionState, 'for session:', sessionId);
+      
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        this.sendSessionReadyToWorker(sessionId);
+      } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+        this.sendSessionFailedToWorker(sessionId, `ICE connection failed: ${pc.iceConnectionState}`);
+      }
+    });
+
+    // Remote stream handler
+    pc.addEventListener('track', (event) => {
+      console.log('Received remote track for session:', sessionId);
+      const [remoteStream] = event.streams;
+      if (remoteStream) {
+        sessionState.remoteStream = remoteStream;
+        this.handleRemoteStream(sessionId, remoteStream);
+      }
+    });
+
+    // Connection state change
+    pc.addEventListener('connectionstatechange', () => {
+      console.log('Connection state:', pc.connectionState, 'for session:', sessionId);
+    });
+  }
+
+  /**
+   * Get local media stream - inspired by SIP.js getLocalMediaStream
+   */
+  private async getLocalMediaStream(sessionState: SessionState, constraints?: SipWorker.MediaConstraints): Promise<void> {
+    // Use provided constraints or defaults
     const mediaConstraints: MediaStreamConstraints = {
-      audio: constraints.audio || true,
-      video: constraints.video || false
+      ...this.configuration.defaultConstraints,
+      ...constraints
     };
 
+    // Skip if we already have a compatible stream
+    if (sessionState.localStream) {
+      // TODO: Check if current stream matches constraints
+      return;
+    }
+
+    console.log('Getting user media with constraints:', mediaConstraints);
+    
     try {
       const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      console.log('Got user media:', stream.getTracks().map(t => t.kind));
-      return stream;
+      sessionState.localStream = stream;
+
+      // Add tracks to peer connection (like SIP.js setLocalMediaStream)
+      stream.getTracks().forEach(track => {
+        console.log('Adding track to PeerConnection:', track.kind, track.label);
+        sessionState.peerConnection.addTrack(track, stream);
+      });
+
     } catch (error: any) {
       console.error('Failed to get user media:', error);
-      throw new Error(`Failed to get user media: ${error.message}`);
+      throw new Error(`Media access denied: ${error.message}`);
     }
   }
 
   /**
-   * Gửi ICE candidate đến worker
+   * Create local offer - inspired by SIP.js createLocalOfferOrAnswer
+   */
+  private async createLocalOffer(sessionState: SessionState): Promise<RTCSessionDescriptionInit> {
+    const pc = sessionState.peerConnection;
+    
+    if (pc.signalingState !== 'stable') {
+      throw new Error(`Cannot create offer in signaling state: ${pc.signalingState}`);
+    }
+
+    console.log('Creating local offer');
+    return await pc.createOffer();
+  }
+
+  /**
+   * Create local answer - inspired by SIP.js createLocalOfferOrAnswer
+   */
+  private async createLocalAnswer(sessionState: SessionState): Promise<RTCSessionDescriptionInit> {
+    const pc = sessionState.peerConnection;
+    
+    if (pc.signalingState !== 'have-remote-offer') {
+      throw new Error(`Cannot create answer in signaling state: ${pc.signalingState}`);
+    }
+
+    console.log('Creating local answer');
+    return await pc.createAnswer();
+  }
+
+  /**
+   * Set local description
+   */
+  private async setLocalDescription(sessionState: SessionState, description: RTCSessionDescriptionInit): Promise<void> {
+    console.log('Setting local description:', description.type);
+    await sessionState.peerConnection.setLocalDescription(description);
+    
+    // Reset ICE gathering state
+    sessionState.iceGatheringComplete = false;
+    sessionState.iceGatheringPromise = undefined;
+  }
+
+  /**
+   * Wait for ICE gathering to complete - inspired by SIP.js waitForIceGatheringComplete
+   */
+  private async waitForIceGatheringComplete(sessionState: SessionState): Promise<void> {
+    if (sessionState.iceGatheringComplete) {
+      return Promise.resolve();
+    }
+
+    if (sessionState.iceGatheringPromise) {
+      return sessionState.iceGatheringPromise;
+    }
+
+    sessionState.iceGatheringPromise = new Promise<void>((resolve, reject) => {
+      sessionState.iceGatheringResolve = resolve;
+      sessionState.iceGatheringReject = reject;
+
+      // Set timeout
+      if (this.configuration.iceGatheringTimeout! > 0) {
+        sessionState.iceGatheringTimeoutId = setTimeout(() => {
+          console.warn('ICE gathering timeout, proceeding anyway');
+          sessionState.iceGatheringComplete = true;
+          resolve();
+        }, this.configuration.iceGatheringTimeout) as any;
+      }
+    });
+
+    return sessionState.iceGatheringPromise;
+  }
+
+  /**
+   * Process queued ICE candidates
+   */
+  private async processQueuedIceCandidates(sessionState: SessionState): Promise<void> {
+    const candidates = sessionState.iceCandidatesQueue.splice(0);
+    console.log('Processing', candidates.length, 'queued ICE candidates');
+
+    for (const candidate of candidates) {
+      try {
+        await sessionState.peerConnection.addIceCandidate(candidate);
+      } catch (error) {
+        console.warn('Failed to add queued ICE candidate:', error);
+      }
+    }
+  }
+
+  /**
+   * Send ICE candidate to worker
    */
   private sendIceCandidateToWorker(sessionId: string, candidate: RTCIceCandidate): void {
     if (this.callbacks?.sendIceCandidate) {
       this.callbacks.sendIceCandidate(sessionId, candidate);
-    } else {
-      console.log('Should send ICE candidate to worker:', { sessionId, candidate });
     }
   }
 
   /**
-   * Gửi session ready đến worker
+   * Send session ready to worker
    */
   private sendSessionReadyToWorker(sessionId: string): void {
     if (this.callbacks?.sendSessionReady) {
       this.callbacks.sendSessionReady(sessionId);
-    } else {
-      console.log('Should send session ready to worker:', sessionId);
     }
   }
 
   /**
-   * Gửi session failed đến worker
+   * Send session failed to worker
    */
   private sendSessionFailedToWorker(sessionId: string, error: string): void {
     if (this.callbacks?.sendSessionFailed) {
       this.callbacks.sendSessionFailed(sessionId, error);
-    } else {
-      console.log('Should send session failed to worker:', { sessionId, error });
     }
   }
 
   /**
-   * Xử lý remote stream
+   * Handle remote stream
    */
   private handleRemoteStream(sessionId: string, stream: MediaStream): void {
     if (this.callbacks?.handleRemoteStream) {
       this.callbacks.handleRemoteStream(sessionId, stream);
-    } else {
-      console.log('Handling remote stream for session:', sessionId, stream);
     }
   }
 
@@ -305,34 +521,62 @@ export class MediaHandler {
    * Cleanup session
    */
   public cleanupSession(sessionId: string): void {
+    const sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      return;
+    }
+
     console.log('Cleaning up session:', sessionId);
 
-    // Close PeerConnection
-    const peerConnection = this.peerConnections.get(sessionId);
-    if (peerConnection) {
-      peerConnection.close();
-      this.peerConnections.delete(sessionId);
+    // Clear ICE gathering timeout
+    if (sessionState.iceGatheringTimeoutId) {
+      clearTimeout(sessionState.iceGatheringTimeoutId);
     }
 
-    // Stop local stream
-    const localStream = this.localStreams.get(sessionId);
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      this.localStreams.delete(sessionId);
+    // Stop local stream tracks
+    if (sessionState.localStream) {
+      sessionState.localStream.getTracks().forEach(track => track.stop());
     }
 
-    // Clear ICE candidate queue
-    this.iceCandidateQueue.delete(sessionId);
+    // Close peer connection
+    if (sessionState.peerConnection.connectionState !== 'closed') {
+      sessionState.peerConnection.close();
+    }
+
+    this.sessions.delete(sessionId);
   }
 
   /**
    * Cleanup all sessions
    */
   public cleanup(): void {
-    console.log('Cleaning up all media sessions');
+    console.log('Cleaning up MediaHandler');
     
-    for (const sessionId of this.peerConnections.keys()) {
+    for (const sessionId of this.sessions.keys()) {
       this.cleanupSession(sessionId);
     }
+    
+    this.sessions.clear();
+  }
+
+  /**
+   * Get session info for debugging
+   */
+  public getSessionInfo(sessionId: string): any {
+    const sessionState = this.sessions.get(sessionId);
+    if (!sessionState) {
+      return null;
+    }
+
+    return {
+      sessionId,
+      signalingState: sessionState.peerConnection.signalingState,
+      iceConnectionState: sessionState.peerConnection.iceConnectionState,
+      connectionState: sessionState.peerConnection.connectionState,
+      iceGatheringComplete: sessionState.iceGatheringComplete,
+      hasLocalStream: !!sessionState.localStream,
+      hasRemoteStream: !!sessionState.remoteStream,
+      queuedCandidates: sessionState.iceCandidatesQueue.length
+    };
   }
 } 
