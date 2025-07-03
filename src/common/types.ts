@@ -20,6 +20,7 @@ export namespace SipWorker {
     TAB_UNREGISTER = 'tab_unregister',       // Hủy đăng ký tab
     TAB_UPDATE_STATE = 'tab_update_state',   // Cập nhật trạng thái tab (visible, active)
     TAB_SELECTED = 'tab_selected',           // Tab được chọn để xử lý cuộc gọi
+    TAB_LIST_UPDATE = 'tab_list_update',     // Cập nhật danh sách tab
 
     // Tin nhắn SIP
     SIP_REGISTER = 'sip_register',           // Đăng ký SIP
@@ -44,7 +45,11 @@ export namespace SipWorker {
     // Tin nhắn hệ thống
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
-    LOG = 'log'                              // Ghi log
+    LOG = 'log',                             // Ghi log
+    
+    // Tin nhắn ping/pong để kiểm tra kết nối
+    PING = 'ping',                           // Ping để kiểm tra kết nối
+    PONG = 'pong'                            // Phản hồi ping
   }
 
   /**

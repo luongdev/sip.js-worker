@@ -40,10 +40,13 @@
     .tab-item.active {
       background-color: #e1f5fe;
     }
-    .tab-item.inactive {
-      background-color: #f5f5f5;
+    .tab-item.visible {
+      background-color: #e8f5e9;
     }
-    .tab-item.timeout {
+    .tab-item.hidden {
+      background-color: #fff3e0;
+    }
+    .tab-item.closing {
       background-color: #ffebee;
     }
     .message-list {
@@ -115,6 +118,12 @@
       margin: 0;
       padding: 2px 0;
     }
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 15px;
+    }
   </style>
 </head>
 <body>
@@ -139,14 +148,17 @@
         <label for="tab-status">Tab Status:</label>
         <select id="tab-status">
           <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
+          <option value="visible">Visible</option>
           <option value="hidden">Hidden</option>
         </select>
       </div>
       
-      <button id="update-status">Update Status</button>
-      <button id="simulate-timeout">Simulate Timeout</button>
-      <button id="open-new-tab">Open New Tab</button>
+      <div class="button-group">
+        <button id="update-status">Update Status</button>
+        <button id="simulate-timeout">Simulate Timeout</button>
+        <button id="open-new-tab">Open New Tab</button>
+        <button id="send-ping">Send Ping</button>
+      </div>
     </div>
     
     <div class="panel">
@@ -156,10 +168,10 @@
       <div class="form-group">
         <label for="message-type">Message Type:</label>
         <select id="message-type">
-          <option value="REGISTER_TAB">REGISTER_TAB</option>
-          <option value="UPDATE_TAB_STATE">UPDATE_TAB_STATE</option>
-          <option value="PING">PING</option>
-          <option value="CUSTOM">CUSTOM</option>
+          <option value="tab_register">TAB_REGISTER</option>
+          <option value="tab_update_state">TAB_UPDATE_STATE</option>
+          <option value="log">LOG</option>
+          <option value="ping">PING</option>
         </select>
       </div>
       
@@ -173,8 +185,10 @@
         <input type="text" id="target-tab" value="">
       </div>
       
-      <button id="send-message">Send Message</button>
-      <button id="clear-messages">Clear Messages</button>
+      <div class="button-group">
+        <button id="send-message">Send Message</button>
+        <button id="clear-messages">Clear Messages</button>
+      </div>
       
       <h3>Message Log</h3>
       <div class="message-list" id="message-list">

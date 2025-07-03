@@ -1,10 +1,10 @@
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
-import { MessageType, TabState, Message } from '../common/types';
+import { SipWorker } from '../common/types';
 
 // Khởi tạo các đối tượng chính
 const messageBroker = new MessageBroker();
-const tabManager = new TabManager();
+const tabManager = new TabManager(messageBroker);
 
 // Thiết lập các handler cho các loại tin nhắn
 setupMessageHandlers();
@@ -13,158 +13,101 @@ setupMessageHandlers();
 setupTabTimeoutCheck();
 
 // Xử lý kết nối mới từ các tab
-self.addEventListener('connect', (event: MessageEvent) => {
-  const port = (event as any).ports[0];
+self.addEventListener('connect', (event: any) => {
+  const port = event.ports[0];
   
-  // Đăng ký port với message broker
-  messageBroker.registerPort(port);
+  // Đăng ký port với message broker để nhận tin nhắn từ tab
+  const tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  messageBroker.registerTab(tabId, port);
   
   // Log kết nối mới
-  console.log('New connection established');
+  console.log('New connection established with tabId:', tabId);
 });
 
 // Thiết lập các handler xử lý tin nhắn
 function setupMessageHandlers() {
-  // Handler đăng ký tab mới
-  messageBroker.registerHandler(MessageType.REGISTER_TAB, (message: Message) => {
-    const { tabId, data } = message;
-    
-    if (!tabId) {
-      console.error('Missing tabId in REGISTER_TAB message');
-      return;
-    }
-    
-    // Đăng ký tab mới với TabManager
-    tabManager.registerTab(tabId, {
-      state: data.state || TabState.ACTIVE,
-      lastActive: Date.now(),
-      url: data.url || '',
-      title: data.title || ''
-    });
-    
-    // Gửi danh sách tab hiện tại cho tất cả các tab
-    broadcastTabList();
-    
-    console.log(`Tab registered: ${tabId}`);
-  });
+  // Handler đăng ký tab mới - đã được xử lý trong TabManager
   
-  // Handler cập nhật trạng thái tab
-  messageBroker.registerHandler(MessageType.UPDATE_TAB_STATE, (message: Message) => {
-    const { tabId, data } = message;
+  // Handler cho tin nhắn ping để kiểm tra kết nối
+  messageBroker.on(SipWorker.MessageType.PING, async (message, tabId) => {
+    console.log(`Ping received from tab ${tabId}`);
     
-    if (!tabId || !data.state) {
-      console.error('Missing tabId or state in UPDATE_TAB_STATE message');
-      return;
-    }
-    
-    // Cập nhật trạng thái tab
-    tabManager.updateTabState(tabId, data.state);
-    
-    // Gửi danh sách tab hiện tại cho tất cả các tab
-    broadcastTabList();
-    
-    console.log(`Tab state updated: ${tabId} -> ${data.state}`);
-  });
-  
-  // Handler hủy đăng ký tab (khi tab đóng)
-  messageBroker.registerHandler(MessageType.UNREGISTER_TAB, (message: Message) => {
-    const { tabId } = message;
-    
-    if (!tabId) {
-      console.error('Missing tabId in UNREGISTER_TAB message');
-      return;
-    }
-    
-    // Xóa tab khỏi TabManager
-    tabManager.removeTab(tabId);
-    
-    // Gửi danh sách tab hiện tại cho tất cả các tab
-    broadcastTabList();
-    
-    console.log(`Tab unregistered: ${tabId}`);
-  });
-  
-  // Handler cho tin nhắn PING
-  messageBroker.registerHandler(MessageType.PING, (message: Message) => {
-    const { tabId } = message;
-    
-    if (!tabId) {
-      console.error('Missing tabId in PING message');
-      return;
-    }
-    
-    // Cập nhật thời gian hoạt động cuối cùng của tab
-    tabManager.updateLastActive(tabId);
-    
-    // Gửi PONG về cho tab
-    messageBroker.sendMessageToTab(tabId, {
-      type: MessageType.PONG,
-      tabId: 'worker',
+    // Gửi pong về cho tab
+    await messageBroker.sendToTab(tabId, {
+      type: SipWorker.MessageType.PONG,
+      id: `pong-${message.id}`,
+      timestamp: Date.now(),
       data: { timestamp: Date.now() }
     });
     
-    console.log(`Ping received from tab: ${tabId}`);
+    return { success: true };
   });
   
-  // Handler cho tin nhắn PONG
-  messageBroker.registerHandler(MessageType.PONG, (message: Message) => {
-    const { tabId } = message;
-    
-    if (!tabId) {
-      console.error('Missing tabId in PONG message');
-      return;
-    }
-    
-    // Cập nhật thời gian hoạt động cuối cùng của tab
-    tabManager.updateLastActive(tabId);
-    
-    console.log(`Pong received from tab: ${tabId}`);
+  // Handler cho tin nhắn pong
+  messageBroker.on(SipWorker.MessageType.PONG, async (message, tabId) => {
+    console.log(`Pong received from tab ${tabId}`);
+    return { success: true };
   });
   
-  // Handler cho tin nhắn TAB_TIMEOUT (giả lập timeout)
-  messageBroker.registerHandler(MessageType.TAB_TIMEOUT, (message: Message) => {
-    const { tabId } = message;
+  // Handler cho tin nhắn tab_register
+  messageBroker.on(SipWorker.MessageType.TAB_REGISTER, async (message, tabId) => {
+    console.log(`Tab register message from tab ${tabId}`, message.data);
     
-    if (!tabId) {
-      console.error('Missing tabId in TAB_TIMEOUT message');
-      return;
-    }
+    // Đăng ký tab với TabManager
+    const tabInfo = tabManager.registerTab(tabId, message.data);
     
-    // Kiểm tra xem tab có tồn tại không
-    if (tabManager.hasTab(tabId)) {
-      // Cập nhật trạng thái tab thành INACTIVE
-      tabManager.updateTabState(tabId, TabState.INACTIVE);
-      
-      // Gửi danh sách tab hiện tại cho tất cả các tab
-      broadcastTabList();
-      
-      console.log(`Tab timeout simulated: ${tabId}`);
-    } else {
-      console.error(`Tab not found: ${tabId}`);
-    }
+    // Broadcast danh sách tab mới
+    broadcastTabList();
+    
+    return { success: true, tabInfo };
   });
   
-  // Handler mặc định cho các loại tin nhắn khác
-  messageBroker.registerHandler(MessageType.CUSTOM, (message: Message) => {
-    const { tabId, targetTabId, data } = message;
+  // Handler cho tin nhắn tab_update_state
+  messageBroker.on(SipWorker.MessageType.TAB_UPDATE_STATE, async (message, tabId) => {
+    console.log(`Tab update state message from tab ${tabId}`, message.data);
     
-    console.log(`Custom message from ${tabId}:`, data);
-    
-    // Nếu có targetTabId, gửi tin nhắn đến tab đó
-    if (targetTabId) {
-      messageBroker.sendMessageToTab(targetTabId, {
-        type: MessageType.CUSTOM,
-        tabId: tabId,
-        data: data
-      });
-    } else {
-      // Nếu không có targetTabId, broadcast tin nhắn đến tất cả các tab
-      messageBroker.broadcastMessage({
-        type: MessageType.CUSTOM,
-        tabId: tabId,
-        data: data
-      });
+    if (!message.data || !message.data.state) {
+      return { success: false, error: 'Missing state in message data' };
     }
+    
+    // Cập nhật trạng thái tab
+    const tabInfo = tabManager.updateTabState(tabId, message.data.state);
+    
+    // Broadcast danh sách tab mới
+    broadcastTabList();
+    
+    return { success: true, tabInfo };
+  });
+  
+  // Handler cho tin nhắn tab_unregister
+  messageBroker.on(SipWorker.MessageType.TAB_UNREGISTER, async (message, tabId) => {
+    console.log(`Tab unregister message from tab ${tabId}`);
+    
+    // Hủy đăng ký tab
+    tabManager.unregisterTab(tabId);
+    
+    // Broadcast danh sách tab mới
+    broadcastTabList();
+    
+    return { success: true };
+  });
+  
+  // Thêm handler cho tin nhắn WORKER_READY để thông báo worker đã sẵn sàng
+  messageBroker.on(SipWorker.MessageType.WORKER_READY, async (message, tabId) => {
+    console.log(`Worker ready message from tab ${tabId}`);
+    return { success: true };
+  });
+  
+  // Handler cho tin nhắn ERROR để ghi log lỗi
+  messageBroker.on(SipWorker.MessageType.ERROR, async (message, tabId) => {
+    console.error(`Error from tab ${tabId}:`, message.data);
+    return { success: true };
+  });
+  
+  // Handler cho tin nhắn LOG để ghi log
+  messageBroker.on(SipWorker.MessageType.LOG, async (message, tabId) => {
+    console.log(`Log from tab ${tabId}:`, message.data);
+    return { success: true };
   });
 }
 
@@ -179,12 +122,13 @@ function setupTabTimeoutCheck() {
     let hasChanges = false;
     
     // Kiểm tra từng tab
-    Object.entries(tabs).forEach(([tabId, tabInfo]) => {
-      // Nếu tab không hoạt động trong 30 giây, đánh dấu là INACTIVE
-      if (now - tabInfo.lastActive > TAB_TIMEOUT && tabInfo.state !== TabState.INACTIVE) {
-        tabManager.updateTabState(tabId, TabState.INACTIVE);
+    tabs.forEach((tabInfo) => {
+      // Nếu tab không hoạt động trong 30 giây, đánh dấu là HIDDEN
+      if (now - tabInfo.lastActiveTime > TAB_TIMEOUT && 
+          tabInfo.state !== SipWorker.TabState.HIDDEN) {
+        tabManager.updateTabState(tabInfo.id, SipWorker.TabState.HIDDEN);
         hasChanges = true;
-        console.log(`Tab marked as inactive due to timeout: ${tabId}`);
+        console.log(`Tab marked as hidden due to timeout: ${tabInfo.id}`);
       }
     });
     
@@ -193,26 +137,45 @@ function setupTabTimeoutCheck() {
       broadcastTabList();
     }
     
-    // Gửi PING đến tất cả các tab để kiểm tra kết nối
-    messageBroker.broadcastMessage({
-      type: MessageType.PING,
-      tabId: 'worker',
-      data: { timestamp: now }
-    });
+    // Gửi ping định kỳ đến tất cả các tab để kiểm tra kết nối
+    pingAllTabs();
     
   }, TIMEOUT_INTERVAL);
+}
+
+// Gửi ping đến tất cả các tab
+function pingAllTabs() {
+  messageBroker.broadcast({
+    type: SipWorker.MessageType.PING,
+    id: `ping-${Date.now()}`,
+    timestamp: Date.now(),
+    data: { timestamp: Date.now() }
+  });
 }
 
 // Gửi danh sách tab hiện tại đến tất cả các tab
 function broadcastTabList() {
   const tabs = tabManager.getAllTabs();
   
-  messageBroker.broadcastMessage({
-    type: MessageType.TAB_LIST_UPDATE,
-    tabId: 'worker',
-    data: { tabs }
+  // Tạo bản sao của danh sách tab mà không có trường port
+  const tabsForBroadcast = tabs.map(tab => {
+    // Tạo bản sao không có trường port
+    const { port, ...tabWithoutPort } = tab;
+    return tabWithoutPort;
+  });
+  
+  messageBroker.broadcast({
+    type: SipWorker.MessageType.TAB_LIST_UPDATE,
+    id: `tab-list-update-${Date.now()}`,
+    timestamp: Date.now(),
+    data: { tabs: tabsForBroadcast }
   });
 }
+
+// Thêm hàm để broadcast danh sách tab định kỳ
+setInterval(() => {
+  broadcastTabList();
+}, 5000); // Mỗi 5 giây
 
 // Log khởi động worker
 console.log('Worker started'); 
