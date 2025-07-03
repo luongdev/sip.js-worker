@@ -50,11 +50,34 @@ self.addEventListener('connect', (event: any) => {
   // Bắt đầu lắng nghe tin nhắn từ port
   port.start();
   
-  // Tạo ID cho tab mới
-  const tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  // Xử lý tin nhắn đầu tiên để lấy tabId từ client
+  const handleFirstMessage = (messageEvent: MessageEvent) => {
+    const message = messageEvent.data;
+    
+    // Lấy tabId từ tin nhắn đầu tiên
+    const tabId = message.tabId;
+    
+    if (tabId) {
+      // Đăng ký port với MessageBroker sử dụng tabId từ client
+      messageBroker.registerTab(tabId, port);
+      
+      // Xóa listener tạm thời và chuyển sang xử lý bình thường
+      port.removeEventListener('message', handleFirstMessage);
+      
+      // Thiết lập handler xử lý tin nhắn bình thường
+      port.onmessage = (event: MessageEvent) => {
+        messageBroker.processMessage(event.data, tabId, port);
+      };
+      
+      // Xử lý tin nhắn đầu tiên này
+      messageBroker.processMessage(message, tabId, port);
+    } else {
+      console.error('Tin nhắn đầu tiên không có tabId');
+    }
+  };
   
-  // Đăng ký port với MessageBroker
-  messageBroker.registerTab(tabId, port);
+  // Thiết lập listener tạm thời cho tin nhắn đầu tiên
+  port.addEventListener('message', handleFirstMessage);
 });
 
 // Đăng ký các handler xử lý tin nhắn
@@ -108,40 +131,9 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
   
-  // Handler cho tin nhắn TAB_REGISTER
-  messageBroker.on(SipWorker.MessageType.TAB_REGISTER, async (message, tabId, port) => {
-    if (!message.data) {
-      return { success: false, error: 'No tab data provided' };
-    }
-    
-    const tabInfo: SipWorker.TabInfo = {
-      ...message.data,
-      port: port
-    };
-    
-    tabManager.registerTab(tabInfo);
-    return { success: true };
-  });
+  // Handler TAB_REGISTER và TAB_UNREGISTER được xử lý bởi TabManager tự động
   
-  // Handler cho tin nhắn TAB_UNREGISTER
-  messageBroker.on(SipWorker.MessageType.TAB_UNREGISTER, async (message, tabId, port) => {
-    if (!message.tabId) {
-      return { success: false, error: 'No tab ID provided' };
-    }
-    
-    tabManager.unregisterTab(message.tabId);
-    return { success: true };
-  });
-  
-  // Handler cho tin nhắn TAB_UPDATE_STATE
-  messageBroker.on(SipWorker.MessageType.TAB_UPDATE_STATE, async (message, tabId, port) => {
-    if (!message.tabId || !message.data) {
-      return { success: false, error: 'Invalid tab update data' };
-    }
-    
-    tabManager.updateTabState(message.tabId, message.data);
-    return { success: true };
-  });
+  // Handler TAB_UPDATE_STATE được xử lý bởi TabManager tự động
   
   // Handler cho tin nhắn PING
   messageBroker.on(SipWorker.MessageType.PING, async (message, tabId, port) => {

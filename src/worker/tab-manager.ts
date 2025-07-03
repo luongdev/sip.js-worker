@@ -148,10 +148,13 @@ export class TabManager {
   /**
    * Cập nhật trạng thái tab
    * @param tabId ID của tab
-   * @param state Trạng thái mới
+   * @param stateOrData Trạng thái mới (string) hoặc object chứa state và các thuộc tính khác
    * @returns Thông tin đã được cập nhật về tab
    */
-  public updateTabState(tabId: string, state: SipWorker.TabState): SipWorker.TabInfo | null {
+  public updateTabState(
+    tabId: string, 
+    stateOrData: SipWorker.TabState | { state: SipWorker.TabState; lastActiveTime?: number }
+  ): SipWorker.TabInfo | null {
     // Kiểm tra xem tab có tồn tại không
     const tab = this.tabs.get(tabId);
     
@@ -160,11 +163,26 @@ export class TabManager {
       return null;
     }
     
+    // Xác định state và lastActiveTime từ tham số
+    let state: SipWorker.TabState;
+    let lastActiveTime: number | undefined;
+    
+    if (typeof stateOrData === 'string') {
+      // Trường hợp truyền vào chỉ là state string
+      state = stateOrData;
+    } else {
+      // Trường hợp truyền vào là object
+      state = stateOrData.state;
+      lastActiveTime = stateOrData.lastActiveTime;
+    }
+    
     // Cập nhật trạng thái
     tab.state = state;
     
-    // Nếu tab trở thành active, cập nhật thời gian active
-    if (state === SipWorker.TabState.ACTIVE) {
+    // Cập nhật lastActiveTime nếu được cung cấp, hoặc tự động tính nếu tab active
+    if (lastActiveTime !== undefined) {
+      tab.lastActiveTime = lastActiveTime;
+    } else if (state === SipWorker.TabState.ACTIVE) {
       tab.lastActiveTime = Date.now();
     }
     

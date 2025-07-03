@@ -80,6 +80,11 @@ function updateSipStatus(registered) {
 
 // Đăng ký tab với worker
 function registerTab() {
+  // Set state ban đầu
+  currentState = document.visibilityState === 'visible' ? 
+    (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : 
+    SipWorker.TabState.HIDDEN;
+    
   sendMessage({
     type: SipWorker.MessageType.TAB_REGISTER,
     id: `register-${Date.now()}`,
@@ -89,9 +94,7 @@ function registerTab() {
       id: tabId,
       name: document.title,
       url: window.location.href,
-      state: document.visibilityState === 'visible' ? 
-        (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : 
-        SipWorker.TabState.HIDDEN,
+      state: currentState,
       lastActiveTime: Date.now(),
       createdTime: Date.now(),
       mediaPermission: SipWorker.TabMediaPermission.NOT_REQUESTED,
@@ -235,55 +238,53 @@ clearLogsBtn.addEventListener('click', clearLogs);
 // Khởi tạo worker khi trang được tải
 window.addEventListener('load', initWorker);
 
-// Cập nhật trạng thái tab khi thay đổi visibility
-document.addEventListener('visibilitychange', () => {
+// Biến để debounce cập nhật trạng thái
+let stateUpdateTimeout = null;
+
+// Biến lưu state hiện tại để tránh update duplicate
+let currentState = null;
+
+// Hàm cập nhật trạng thái tab (debounced để tránh spam)
+function updateTabState(eventType) {
   if (!port) return;
   
-  const state = document.visibilityState === 'visible' ?
-    (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) :
-    SipWorker.TabState.HIDDEN;
+  // Clear timeout cũ nếu có
+  if (stateUpdateTimeout) {
+    clearTimeout(stateUpdateTimeout);
+  }
+  
+  // Debounce 50ms để tránh nhiều update liên tiếp
+  stateUpdateTimeout = setTimeout(() => {
+    const state = document.visibilityState === 'visible' ?
+      (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) :
+      SipWorker.TabState.HIDDEN;
     
-  sendMessage({
-    type: SipWorker.MessageType.TAB_UPDATE_STATE,
-    id: `tab-update-${Date.now()}`,
-    tabId: tabId,
-    timestamp: Date.now(),
-    data: {
-      state,
-      lastActiveTime: state === SipWorker.TabState.ACTIVE ? Date.now() : undefined
+    // Chỉ gửi nếu state thực sự thay đổi
+    if (state === currentState) {
+      console.log(`Skip duplicate state update: ${state} (triggered by ${eventType})`);
+      return;
     }
-  });
-});
+    
+    console.log(`State changed from ${currentState} to ${state} (triggered by ${eventType})`);
+    currentState = state;
+      
+    sendMessage({
+      type: SipWorker.MessageType.TAB_UPDATE_STATE,
+      id: `tab-update-${Date.now()}`,
+      tabId: tabId,
+      timestamp: Date.now(),
+      data: {
+        state,
+        lastActiveTime: state === SipWorker.TabState.ACTIVE ? Date.now() : undefined
+      }
+    });
+  }, 50);
+}
 
-// Cập nhật trạng thái tab khi focus/blur
-window.addEventListener('focus', () => {
-  if (!port) return;
-  
-  sendMessage({
-    type: SipWorker.MessageType.TAB_UPDATE_STATE,
-    id: `tab-update-${Date.now()}`,
-    tabId: tabId,
-    timestamp: Date.now(),
-    data: {
-      state: SipWorker.TabState.ACTIVE,
-      lastActiveTime: Date.now()
-    }
-  });
-});
-
-window.addEventListener('blur', () => {
-  if (!port) return;
-  
-  sendMessage({
-    type: SipWorker.MessageType.TAB_UPDATE_STATE,
-    id: `tab-update-${Date.now()}`,
-    tabId: tabId,
-    timestamp: Date.now(),
-    data: {
-      state: SipWorker.TabState.VISIBLE
-    }
-  });
-});
+// Cập nhật trạng thái tab khi thay đổi visibility hoặc focus
+document.addEventListener('visibilitychange', () => updateTabState('visibilitychange'));
+window.addEventListener('focus', () => updateTabState('focus'));
+window.addEventListener('blur', () => updateTabState('blur'));
 
 // Xử lý khi đóng tab
 window.addEventListener('beforeunload', () => {

@@ -255,6 +255,20 @@ export class MessageBroker {
   }
 
   /**
+   * Xử lý tin nhắn đến từ tab (public method)
+   * @param message Tin nhắn cần xử lý
+   * @param tabId ID của tab gửi tin nhắn
+   * @param port Cổng kết nối đến tab
+   */
+  public async processMessage(
+    message: SipWorker.Message,
+    tabId: string,
+    port: MessagePort
+  ): Promise<void> {
+    return this.handleIncomingMessage(message, tabId, port);
+  }
+
+  /**
    * Xử lý tin nhắn đến từ tab
    * @param message Tin nhắn cần xử lý
    * @param tabId ID của tab gửi tin nhắn
