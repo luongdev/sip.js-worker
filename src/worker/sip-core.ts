@@ -5,6 +5,7 @@
 import { SipWorker } from '../common/types';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
+import { createWorkerSessionDescriptionHandlerFactory } from './worker-session-description-handler';
 import { 
   UserAgent, 
   UserAgentOptions, 
@@ -14,7 +15,8 @@ import {
   Invitation,
   Session,
   SessionState,
-  Web
+  Web,
+  InviterOptions
 } from 'sip.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -332,6 +334,12 @@ export class SipCore {
         // Không sử dụng maxReconnectionAttempts vì không được hỗ trợ
       };
 
+      // Tạo WorkerSessionDescriptionHandlerFactory
+      const sessionDescriptionHandlerFactory = createWorkerSessionDescriptionHandlerFactory(
+        this.messageBroker,
+        this.tabManager
+      );
+
       // Tạo cấu hình UserAgent
       const userAgentOptions: UserAgentOptions = {
         uri,
@@ -343,6 +351,7 @@ export class SipCore {
         logLevel: this.getLogLevel(),
         viaHost: uri.host,
         contactName: this.sipConfig.username,
+        sessionDescriptionHandlerFactory,
         sessionDescriptionHandlerFactoryOptions: {
           iceGatheringTimeout: 2000,
           peerConnectionConfiguration: {
@@ -453,27 +462,38 @@ export class SipCore {
       // Tạo callId duy nhất bằng UUID
       const callId = uuidv4();
 
-      // Tạo extra headers với Call-ID
-      const extraHeaders = [
-        `Call-ID: ${callId}@${this.sipConfig.uri.replace('sip:', '')}`
-      ];
-
       // Thêm custom headers nếu có
+      const extraHeaders: string[] = [];
       if (request.extraHeaders) {
         Object.entries(request.extraHeaders).forEach(([key, value]) => {
           extraHeaders.push(`${key}: ${value}`);
         });
       }
 
-      // Tạo Inviter với audio only (no video)
-      const inviter = new Inviter(this.userAgent, targetUri, {
+      const inviterOptions = {
         sessionDescriptionHandlerOptions: {
           constraints: {
             audio: true,
             video: false
           }
-        }
-      });
+        },
+        extraHeaders: extraHeaders,
+        params: { callId },
+      } as InviterOptions as any;
+      
+      // Tạo Inviter với custom Call-ID thông qua params
+      // Sử dụng trick: tạo một inviter tạm để lấy outgoingRequestMessage, sau đó hack callId
+      const inviter = new Inviter(this.userAgent, targetUri, inviterOptions);
+
+      // HACK: Override Call-ID trực tiếp trong outgoingRequestMessage
+      // @ts-ignore - Truy cập thuộc tính private
+      if (inviter.outgoingRequestMessage) {
+        // @ts-ignore - Override Call-ID
+        inviter.outgoingRequestMessage.callId = callId;
+        // @ts-ignore - Update header map
+        // @ts-ignore - Update session ID
+        inviter._id = callId + inviter.fromTag;
+      }
 
       // Tạo thông tin cuộc gọi
       const callInfo: SipWorker.CallInfo = {

@@ -48,6 +48,14 @@ export namespace SipWorker {
     MEDIA_RESPONSE = 'media_response',       // Phản hồi media từ tab
     MEDIA_ERROR = 'media_error',             // Lỗi media
 
+    // Media negotiation for Worker-based SessionDescriptionHandler
+    MEDIA_GET_OFFER = 'media_get_offer',          // Worker yêu cầu tab tạo offer SDP
+    MEDIA_GET_ANSWER = 'media_get_answer',        // Worker yêu cầu tab tạo answer SDP 
+    MEDIA_SET_REMOTE_SDP = 'media_set_remote_sdp', // Worker gửi remote SDP cho tab
+    MEDIA_ICE_CANDIDATE = 'media_ice_candidate',   // Trao đổi ICE candidates
+    MEDIA_SESSION_READY = 'media_session_ready',   // Tab báo session đã sẵn sàng
+    MEDIA_SESSION_FAILED = 'media_session_failed', // Tab báo session thất bại
+
     // Tin nhắn hệ thống
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
@@ -662,6 +670,74 @@ export namespace SipWorker {
      * Thông tin cuộc gọi (nếu thành công)
      */
     callInfo?: CallInfo;
+
+    /**
+     * Thông báo lỗi (nếu thất bại)
+     */
+    error?: string;
+  }
+
+  /**
+   * Media constraints cho tab
+   */
+  export interface MediaConstraints {
+    audio?: boolean | MediaTrackConstraints;
+    video?: boolean | MediaTrackConstraints;
+  }
+
+  /**
+   * Yêu cầu media từ worker đến tab
+   */
+  export interface MediaRequest {
+    /**
+     * ID của session SIP
+     */
+    sessionId: string;
+
+    /**
+     * Loại yêu cầu
+     */
+    type: 'offer' | 'answer' | 'set-remote-sdp' | 'ice-candidate';
+
+    /**
+     * Constraints cho media (khi tạo offer/answer)
+     */
+    constraints?: MediaConstraints;
+
+    /**
+     * SDP content (khi set remote SDP)
+     */
+    sdp?: string;
+
+    /**
+     * ICE candidate (khi trao đổi ICE)
+     */
+    candidate?: RTCIceCandidateInit;
+  }
+
+  /**
+   * Phản hồi media từ tab về worker
+   */
+  export interface MediaResponse {
+    /**
+     * ID của session SIP
+     */
+    sessionId: string;
+
+    /**
+     * Có thành công không
+     */
+    success: boolean;
+
+    /**
+     * SDP content (khi tạo offer/answer thành công)
+     */
+    sdp?: string;
+
+    /**
+     * ICE candidate (khi có candidate mới)
+     */
+    candidate?: RTCIceCandidateInit;
 
     /**
      * Thông báo lỗi (nếu thất bại)
