@@ -10,11 +10,13 @@ import {
   UserAgentOptions, 
   Registerer, 
   RegistererState,
+  Inviter,
   Invitation,
   Session,
-  URI,
+  SessionState,
   Web
 } from 'sip.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Định nghĩa LogLevel theo đúng định nghĩa từ sip.js
 type LogLevel = "debug" | "log" | "warn" | "error";
@@ -339,6 +341,8 @@ export class SipCore {
         displayName: this.sipConfig.displayName,
         logBuiltinEnabled: this.logConfig.console,
         logLevel: this.getLogLevel(),
+        viaHost: uri.host,
+        contactName: this.sipConfig.username,
         sessionDescriptionHandlerFactoryOptions: {
           iceGatheringTimeout: 2000,
           peerConnectionConfiguration: {
@@ -402,6 +406,161 @@ export class SipCore {
    */
   private handleIncomingCall(invitation: Invitation): void {
     // TODO: Implement trong bước tiếp theo
+  }
+
+  /**
+   * Tạo cuộc gọi đi
+   * @param request Thông tin cuộc gọi
+   * @returns Promise với kết quả cuộc gọi
+   */
+  public async makeCall(request: SipWorker.MakeCallRequest): Promise<SipWorker.MakeCallResponse> {
+    try {
+      // Kiểm tra UserAgent đã được khởi tạo
+      if (!this.userAgent) {
+        return {
+          success: false,
+          error: 'UserAgent not initialized'
+        };
+      }
+
+      // Kiểm tra đã đăng ký SIP
+      if (!this.registered) {
+        return {
+          success: false,
+          error: 'SIP not registered'
+        };
+      }
+
+      // Kiểm tra target URI
+      if (!request.targetUri) {
+        return {
+          success: false,
+          error: 'Target URI is required'
+        };
+      }
+
+      // Tạo URI đích
+      const targetUri = UserAgent.makeURI(request.targetUri);
+      if (!targetUri) {
+        return {
+          success: false,
+          error: `Invalid target URI: ${request.targetUri}`
+        };
+      }
+
+      this.log('info', `Making call to: ${request.targetUri}`);
+
+      // Tạo callId duy nhất bằng UUID
+      const callId = uuidv4();
+
+      // Tạo extra headers với Call-ID
+      const extraHeaders = [
+        `Call-ID: ${callId}@${this.sipConfig.uri.replace('sip:', '')}`
+      ];
+
+      // Thêm custom headers nếu có
+      if (request.extraHeaders) {
+        Object.entries(request.extraHeaders).forEach(([key, value]) => {
+          extraHeaders.push(`${key}: ${value}`);
+        });
+      }
+
+      // Tạo Inviter với audio only (no video)
+      const inviter = new Inviter(this.userAgent, targetUri, {
+        sessionDescriptionHandlerOptions: {
+          constraints: {
+            audio: true,
+            video: false
+          }
+        }
+      });
+
+      // Tạo thông tin cuộc gọi
+      const callInfo: SipWorker.CallInfo = {
+        id: callId,
+        direction: SipWorker.CallDirection.OUTGOING,
+        state: SipWorker.CallState.CONNECTING,
+        remoteUri: request.targetUri,
+        remoteDisplayName: targetUri.toString() || undefined,
+        startTime: Date.now()
+      };
+
+      // Lưu cuộc gọi vào danh sách
+      this.activeCalls.set(callId, inviter);
+
+      // Thiết lập event listeners cho inviter
+      this.setupInviterListeners(inviter, callInfo);
+
+      // Gửi INVITE với custom headers
+      const inviteResult = await inviter.invite({
+        requestOptions: {
+          extraHeaders: extraHeaders
+        }
+      });
+
+      // Broadcast thông tin cuộc gọi đi
+      this.broadcastCallStatus(callInfo);
+
+      this.log('info', `Call initiated successfully with ID: ${callId}`);
+
+      return {
+        success: true,
+        callInfo: callInfo
+      };
+
+    } catch (error: any) {
+      this.log('error', `Failed to make call: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Thiết lập event listeners cho Inviter
+   * @param inviter Inviter instance
+   * @param callInfo Thông tin cuộc gọi
+   */
+  private setupInviterListeners(inviter: Inviter, callInfo: SipWorker.CallInfo): void {
+    // Khi nhận được provisional response
+    inviter.stateChange.addListener((state) => {
+      this.log('info', `Call ${callInfo.id} state changed to: ${state}`);
+      
+      switch (state) {
+        case SessionState.Establishing:
+          callInfo.state = SipWorker.CallState.RINGING;
+          this.broadcastCallStatus(callInfo);
+          break;
+        case SessionState.Established:
+          callInfo.state = SipWorker.CallState.ESTABLISHED;
+          callInfo.establishedTime = Date.now();
+          this.broadcastCallStatus(callInfo);
+          break;
+        case SessionState.Terminated:
+          callInfo.state = SipWorker.CallState.TERMINATED;
+          callInfo.endTime = Date.now();
+          this.activeCalls.delete(callInfo.id);
+          this.broadcastCallStatus(callInfo);
+          break;
+      }
+    });
+
+    // Note: SIP.js handles reject events automatically via state changes
+    // No need to manually set onReject delegate
+  }
+
+  /**
+   * Broadcast trạng thái cuộc gọi đến tất cả tabs
+   * @param callInfo Thông tin cuộc gọi
+   */
+  private broadcastCallStatus(callInfo: SipWorker.CallInfo): void {
+    this.messageBroker.broadcast({
+      type: SipWorker.MessageType.CALL_PROGRESS,
+      id: `call-progress-${Date.now()}`,
+      timestamp: Date.now(),
+      data: callInfo
+    });
   }
 
   /**

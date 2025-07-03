@@ -33,10 +33,15 @@ export namespace SipWorker {
     // Tin nhắn cuộc gọi
     CALL_INCOMING = 'call_incoming',         // Có cuộc gọi đến
     CALL_OUTGOING = 'call_outgoing',         // Tạo cuộc gọi đi
+    CALL_MAKE = 'call_make',                 // Yêu cầu tạo cuộc gọi từ client
+    CALL_ANSWER = 'call_answer',             // Trả lời cuộc gọi
+    CALL_REJECT = 'call_reject',             // Từ chối cuộc gọi
+    CALL_HANGUP = 'call_hangup',             // Cúp máy / kết thúc cuộc gọi
     CALL_ACCEPTED = 'call_accepted',         // Cuộc gọi được chấp nhận
     CALL_REJECTED = 'call_rejected',         // Cuộc gọi bị từ chối
     CALL_TERMINATED = 'call_terminated',     // Cuộc gọi kết thúc
     CALL_FAILED = 'call_failed',             // Cuộc gọi thất bại
+    CALL_PROGRESS = 'call_progress',         // Tiến trình cuộc gọi (ringing, etc.)
 
     // Tin nhắn media
     MEDIA_REQUEST = 'media_request',         // Yêu cầu media từ tab
@@ -527,5 +532,140 @@ export namespace SipWorker {
      * Tên của tab (nếu không cung cấp sẽ sử dụng document.title)
      */
     tabName?: string;
+  }
+
+  /**
+   * Trạng thái cuộc gọi
+   */
+  export enum CallState {
+    /**
+     * Cuộc gọi đang được thiết lập
+     */
+    CONNECTING = 'connecting',
+
+    /**
+     * Cuộc gọi đang đổ chuông
+     */
+    RINGING = 'ringing',
+
+    /**
+     * Cuộc gọi đã được thiết lập
+     */
+    ESTABLISHED = 'established',
+
+    /**
+     * Cuộc gọi đã kết thúc
+     */
+    TERMINATED = 'terminated',
+
+    /**
+     * Cuộc gọi thất bại
+     */
+    FAILED = 'failed'
+  }
+
+  /**
+   * Hướng cuộc gọi
+   */
+  export enum CallDirection {
+    /**
+     * Cuộc gọi đi
+     */
+    OUTGOING = 'outgoing',
+
+    /**
+     * Cuộc gọi đến
+     */
+    INCOMING = 'incoming'
+  }
+
+  /**
+   * Interface cho thông tin cuộc gọi
+   */
+  export interface CallInfo {
+    /**
+     * ID duy nhất của cuộc gọi
+     */
+    id: string;
+
+    /**
+     * Hướng cuộc gọi
+     */
+    direction: CallDirection;
+
+    /**
+     * Trạng thái cuộc gọi
+     */
+    state: CallState;
+
+    /**
+     * URI của người gọi/người nhận
+     */
+    remoteUri: string;
+
+    /**
+     * Tên hiển thị của người gọi/người nhận
+     */
+    remoteDisplayName?: string;
+
+    /**
+     * Thời gian cuộc gọi được tạo
+     */
+    startTime: number;
+
+    /**
+     * Thời gian cuộc gọi được thiết lập (nếu có)
+     */
+    establishedTime?: number;
+
+    /**
+     * Thời gian cuộc gọi kết thúc (nếu có)
+     */
+    endTime?: number;
+
+    /**
+     * ID của tab đang xử lý cuộc gọi
+     */
+    handlingTabId?: string;
+  }
+
+  /**
+   * Interface cho yêu cầu tạo cuộc gọi
+   */
+  export interface MakeCallRequest {
+    /**
+     * URI SIP của người nhận
+     */
+    targetUri: string;
+
+    /**
+     * Các header tùy chọn
+     */
+    extraHeaders?: Record<string, string>;
+
+    /**
+     * Thời gian chờ tối đa (ms)
+     */
+    timeout?: number;
+  }
+
+  /**
+   * Interface cho phản hồi tạo cuộc gọi
+   */
+  export interface MakeCallResponse {
+    /**
+     * Có thành công không
+     */
+    success: boolean;
+
+    /**
+     * Thông tin cuộc gọi (nếu thành công)
+     */
+    callInfo?: CallInfo;
+
+    /**
+     * Thông báo lỗi (nếu thất bại)
+     */
+    error?: string;
   }
 } 

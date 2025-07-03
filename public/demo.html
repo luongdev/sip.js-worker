@@ -179,6 +179,22 @@
       <div class="button-group">
         <button id="updateCredentialsBtn" disabled>Update Credentials</button>
       </div>
+      
+      <h2>📞 Call Controls</h2>
+      
+      <div class="form-group">
+        <label for="targetUri">Target URI:</label>
+        <input type="text" id="targetUri" value="sip:200@devopt.metechvn.com" placeholder="sip:user@domain.com">
+      </div>
+      
+      <div class="button-group">
+        <button id="makeCallBtn" disabled>📞 Make Call</button>
+        <button id="hangupCallBtn" disabled>📵 Hang Up</button>
+      </div>
+      
+      <div id="callStatus" style="margin-top: 10px; padding: 8px; background-color: #f8f9fa; border-radius: 4px; display: none;">
+        <strong>Call Status:</strong> <span id="callStatusText">-</span>
+      </div>
     </div>
     
     <div class="log-panel">

@@ -130,6 +130,15 @@ function registerMessageHandlers() {
     }
     return { success: false, error: 'SIP not initialized' };
   });
+
+  // Handler cho tin nhắn CALL_MAKE
+  messageBroker.on(SipWorker.MessageType.CALL_MAKE, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.MakeCallRequest;
+      return await sipCore.makeCall(request);
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
   
   // Handler cho tin nhắn PING
   messageBroker.on(SipWorker.MessageType.PING, async (message, tabId, port) => {

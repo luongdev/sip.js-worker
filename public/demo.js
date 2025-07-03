@@ -29,6 +29,16 @@ const logContainer = document.getElementById('logContainer');
 const workerStatus = document.getElementById('workerStatus');
 const sipStatus = document.getElementById('sipStatus');
 
+// Call controls
+const targetUriInput = document.getElementById('targetUri');
+const makeCallBtn = document.getElementById('makeCallBtn');
+const hangupCallBtn = document.getElementById('hangupCallBtn');
+const callStatus = document.getElementById('callStatus');
+const callStatusText = document.getElementById('callStatusText');
+
+// Call state
+let currentCall = null;
+
 // Khởi tạo worker
 function initWorker() {
   try {
@@ -76,6 +86,10 @@ function updateSipStatus(registered) {
   registerBtn.disabled = registered;
   unregisterBtn.disabled = !registered;
   updateCredentialsBtn.disabled = !registered;
+  
+  // Cập nhật call buttons
+  makeCallBtn.disabled = !registered || currentCall !== null;
+  hangupCallBtn.disabled = currentCall === null;
 }
 
 // Đăng ký tab với worker
@@ -144,6 +158,12 @@ function handleWorkerMessage(event) {
     case SipWorker.MessageType.LOG:
       if (message.data) {
         addLog(message.data.level, message.data.message);
+      }
+      break;
+      
+    case SipWorker.MessageType.CALL_PROGRESS:
+      if (message.data) {
+        handleCallProgress(message.data);
       }
       break;
       
@@ -229,11 +249,85 @@ function updateCredentials() {
   updateCredentialsBtn.disabled = true;
 }
 
+// Tạo cuộc gọi
+function makeCall() {
+  if (!targetUriInput.value.trim()) {
+    addLog('error', 'Target URI is required');
+    return;
+  }
+  
+  const request = {
+    targetUri: targetUriInput.value.trim()
+  };
+  
+  sendMessage({
+    type: SipWorker.MessageType.CALL_MAKE,
+    id: `call-make-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: request
+  });
+  
+  addLog('info', `Making call to: ${request.targetUri}`);
+  makeCallBtn.disabled = true;
+}
+
+// Cúp máy
+function hangupCall() {
+  if (!currentCall) {
+    addLog('error', 'No active call to hang up');
+    return;
+  }
+  
+  sendMessage({
+    type: SipWorker.MessageType.CALL_HANGUP,
+    id: `call-hangup-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      callId: currentCall.id
+    }
+  });
+  
+  addLog('info', `Hanging up call: ${currentCall.id}`);
+}
+
+// Xử lý cập nhật trạng thái cuộc gọi
+function handleCallProgress(callInfo) {
+  addLog('info', `Call progress: ${callInfo.state} - ${callInfo.remoteUri}`);
+  
+  // Cập nhật currentCall
+  if (callInfo.state === SipWorker.CallState.TERMINATED || callInfo.state === SipWorker.CallState.FAILED) {
+    currentCall = null;
+    updateCallStatus('');
+    callStatus.style.display = 'none';
+    
+    // Re-enable call buttons
+    makeCallBtn.disabled = !isRegistered;
+    hangupCallBtn.disabled = true;
+  } else {
+    currentCall = callInfo;
+    updateCallStatus(`${callInfo.state.toUpperCase()} - ${callInfo.remoteUri}`);
+    callStatus.style.display = 'block';
+    
+    // Update buttons based on call state
+    makeCallBtn.disabled = true;
+    hangupCallBtn.disabled = false;
+  }
+}
+
+// Cập nhật trạng thái cuộc gọi trên UI
+function updateCallStatus(status) {
+  callStatusText.textContent = status;
+}
+
 // Thiết lập các sự kiện
 registerBtn.addEventListener('click', registerSip);
 unregisterBtn.addEventListener('click', unregisterSip);
 updateCredentialsBtn.addEventListener('click', updateCredentials);
 clearLogsBtn.addEventListener('click', clearLogs);
+makeCallBtn.addEventListener('click', makeCall);
+hangupCallBtn.addEventListener('click', hangupCall);
 
 // Khởi tạo worker khi trang được tải
 window.addEventListener('load', initWorker);
