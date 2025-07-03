@@ -11,11 +11,13 @@ let worker = null;
 let port = null;
 let tabId = `tab-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 let isRegistered = false;
+let isWorkerConnected = false;
 
 // Các phần tử DOM
 const registerBtn = document.getElementById('registerBtn');
 const unregisterBtn = document.getElementById('unregisterBtn');
 const updateCredentialsBtn = document.getElementById('updateCredentialsBtn');
+const clearLogsBtn = document.getElementById('clearLogsBtn');
 const sipUriInput = document.getElementById('sipUri');
 const usernameInput = document.getElementById('username');
 const passwordInput = document.getElementById('password');
@@ -24,6 +26,8 @@ const wsServerInput = document.getElementById('wsServer');
 const newUsernameInput = document.getElementById('newUsername');
 const newPasswordInput = document.getElementById('newPassword');
 const logContainer = document.getElementById('logContainer');
+const workerStatus = document.getElementById('workerStatus');
+const sipStatus = document.getElementById('sipStatus');
 
 // Khởi tạo worker
 function initWorker() {
@@ -40,10 +44,38 @@ function initWorker() {
     // Đăng ký tab
     registerTab();
     
+    // Cập nhật trạng thái worker
+    updateWorkerStatus(true);
+    
     addLog('info', 'Worker initialized successfully');
   } catch (error) {
+    updateWorkerStatus(false);
     addLog('error', `Failed to initialize worker: ${error.message}`);
   }
+}
+
+// Cập nhật trạng thái worker
+function updateWorkerStatus(connected) {
+  isWorkerConnected = connected;
+  workerStatus.textContent = `Worker: ${connected ? 'Connected' : 'Disconnected'}`;
+  workerStatus.className = `status status-${connected ? 'connected' : 'disconnected'}`;
+  
+  // Disable các nút nếu worker không kết nối
+  registerBtn.disabled = !connected;
+  unregisterBtn.disabled = !connected || !isRegistered;
+  updateCredentialsBtn.disabled = !connected || !isRegistered;
+}
+
+// Cập nhật trạng thái SIP
+function updateSipStatus(registered) {
+  isRegistered = registered;
+  sipStatus.textContent = `SIP: ${registered ? 'Registered' : 'Unregistered'}`;
+  sipStatus.className = `status status-${registered ? 'registered' : 'unregistered'}`;
+  
+  // Cập nhật trạng thái các nút
+  registerBtn.disabled = registered;
+  unregisterBtn.disabled = !registered;
+  updateCredentialsBtn.disabled = !registered;
 }
 
 // Đăng ký tab với worker
@@ -88,30 +120,22 @@ function handleWorkerMessage(event) {
   switch (message.type) {
     case SipWorker.MessageType.WORKER_READY:
       addLog('info', 'Worker is ready');
+      updateWorkerStatus(true);
       break;
       
     case SipWorker.MessageType.SIP_REGISTERED:
       addLog('info', `SIP registered successfully: ${JSON.stringify(message.data)}`);
-      isRegistered = true;
-      registerBtn.disabled = true;
-      unregisterBtn.disabled = false;
-      updateCredentialsBtn.disabled = false;
+      updateSipStatus(true);
       break;
       
     case SipWorker.MessageType.SIP_UNREGISTERED:
       addLog('info', 'SIP unregistered');
-      isRegistered = false;
-      registerBtn.disabled = false;
-      unregisterBtn.disabled = true;
-      updateCredentialsBtn.disabled = true;
+      updateSipStatus(false);
       break;
       
     case SipWorker.MessageType.SIP_REGISTRATION_FAILED:
       addLog('error', `SIP registration failed: ${message.data?.error || 'Unknown error'}`);
-      isRegistered = false;
-      registerBtn.disabled = false;
-      unregisterBtn.disabled = true;
-      updateCredentialsBtn.disabled = true;
+      updateSipStatus(false);
       break;
       
     case SipWorker.MessageType.LOG:
@@ -130,9 +154,18 @@ function handleWorkerMessage(event) {
 function addLog(level, message) {
   const logEntry = document.createElement('div');
   logEntry.className = `log-entry log-${level}`;
-  logEntry.textContent = `[${new Date().toLocaleTimeString()}] [${level.toUpperCase()}] ${message}`;
+  
+  const timestamp = new Date().toLocaleTimeString();
+  logEntry.textContent = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  
   logContainer.appendChild(logEntry);
   logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+// Xóa tất cả log
+function clearLogs() {
+  logContainer.innerHTML = '';
+  addLog('info', 'Logs cleared');
 }
 
 // Đăng ký SIP
@@ -158,6 +191,9 @@ function registerSip() {
       transportConfig
     }
   });
+  
+  // Disable nút register trong khi đang xử lý
+  registerBtn.disabled = true;
 }
 
 // Hủy đăng ký SIP
@@ -168,6 +204,9 @@ function unregisterSip() {
     tabId: tabId,
     timestamp: Date.now()
   });
+  
+  // Disable nút unregister trong khi đang xử lý
+  unregisterBtn.disabled = true;
 }
 
 // Cập nhật thông tin đăng nhập
@@ -182,12 +221,16 @@ function updateCredentials() {
       password: newPasswordInput.value
     }
   });
+  
+  // Disable nút update trong khi đang xử lý
+  updateCredentialsBtn.disabled = true;
 }
 
 // Thiết lập các sự kiện
 registerBtn.addEventListener('click', registerSip);
 unregisterBtn.addEventListener('click', unregisterSip);
 updateCredentialsBtn.addEventListener('click', updateCredentials);
+clearLogsBtn.addEventListener('click', clearLogs);
 
 // Khởi tạo worker khi trang được tải
 window.addEventListener('load', initWorker);
