@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIP Worker.js Manual Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .container {
+      display: flex;
+      gap: 20px;
+    }
+    .panel {
+      flex: 1;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    .tab-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .tab-item {
+      padding: 8px;
+      margin-bottom: 5px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .tab-item.active {
+      background-color: #e1f5fe;
+    }
+    .tab-item.inactive {
+      background-color: #f5f5f5;
+    }
+    .tab-item.timeout {
+      background-color: #ffebee;
+    }
+    .message-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .message-item {
+      padding: 8px;
+      margin-bottom: 5px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+    }
+    .message-item.sent {
+      background-color: #e8f5e9;
+    }
+    .message-item.received {
+      background-color: #e3f2fd;
+    }
+    button {
+      padding: 8px 12px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      background-color: #2196f3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #1976d2;
+    }
+    input, select {
+      padding: 8px;
+      margin-bottom: 10px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    .status {
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .status.connected {
+      color: green;
+    }
+    .status.disconnected {
+      color: red;
+    }
+    .log-container {
+      background-color: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 4px;
+      padding: 10px;
+      font-family: monospace;
+      height: 200px;
+      overflow-y: auto;
+    }
+    .log-entry {
+      margin: 0;
+      padding: 2px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>SIP Worker.js Manual Test</h1>
+  
+  <div class="container">
+    <div class="panel">
+      <h2>Tab Management</h2>
+      <div class="status" id="worker-status">Worker Status: Initializing...</div>
+      
+      <h3>Current Tabs</h3>
+      <div class="tab-list" id="tab-list">
+        <!-- Tab items will be added here dynamically -->
+      </div>
+      
+      <div class="form-group">
+        <label for="tab-id">Tab ID:</label>
+        <input type="text" id="tab-id" value="" readonly>
+      </div>
+      
+      <div class="form-group">
+        <label for="tab-status">Tab Status:</label>
+        <select id="tab-status">
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+          <option value="hidden">Hidden</option>
+        </select>
+      </div>
+      
+      <button id="update-status">Update Status</button>
+      <button id="simulate-timeout">Simulate Timeout</button>
+      <button id="open-new-tab">Open New Tab</button>
+    </div>
+    
+    <div class="panel">
+      <h2>Message Testing</h2>
+      
+      <h3>Send Message</h3>
+      <div class="form-group">
+        <label for="message-type">Message Type:</label>
+        <select id="message-type">
+          <option value="REGISTER_TAB">REGISTER_TAB</option>
+          <option value="UPDATE_TAB_STATE">UPDATE_TAB_STATE</option>
+          <option value="PING">PING</option>
+          <option value="CUSTOM">CUSTOM</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="message-data">Message Data (JSON):</label>
+        <input type="text" id="message-data" value='{"key": "value"}'>
+      </div>
+      
+      <div class="form-group">
+        <label for="target-tab">Target Tab (leave empty for broadcast):</label>
+        <input type="text" id="target-tab" value="">
+      </div>
+      
+      <button id="send-message">Send Message</button>
+      <button id="clear-messages">Clear Messages</button>
+      
+      <h3>Message Log</h3>
+      <div class="message-list" id="message-list">
+        <!-- Message items will be added here dynamically -->
+      </div>
+    </div>
+  </div>
+  
+  <div class="panel">
+    <h2>Console Log</h2>
+    <div class="log-container" id="log-container">
+      <!-- Log entries will be added here dynamically -->
+    </div>
+    <button id="clear-logs">Clear Logs</button>
+  </div>
+
+  <script type="module" src="/demo.js"></script>
+</body>
+</html> 

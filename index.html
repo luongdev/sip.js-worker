@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIP Worker Test</title>
+</head>
+<body>
+  <h1>SIP Worker Test</h1>
+  <div id="status">Connecting to worker...</div>
+  <button id="testBtn">Send Test Message</button>
+  <div id="messages"></div>
+
+  <script type="module">
+    // Import worker
+    const worker = new SharedWorker('./dist/worker/sip-worker.worker.js', { type: 'module' });
+    const statusEl = document.getElementById('status');
+    const messagesEl = document.getElementById('messages');
+    const testBtn = document.getElementById('testBtn');
+
+    // Handle messages from worker
+    worker.port.onmessage = (event) => {
+      console.log('Message from worker:', event.data);
+      const msgEl = document.createElement('div');
+      msgEl.textContent = `Worker: ${event.data}`;
+      messagesEl.appendChild(msgEl);
+      
+      if (event.data === 'Connected to SIP Worker') {
+        statusEl.textContent = 'Connected to SIP Worker';
+        statusEl.style.color = 'green';
+      }
+    };
+
+    // Start the connection
+    worker.port.start();
+
+    // Test button
+    testBtn.addEventListener('click', () => {
+      const message = `Test message from client: ${new Date().toISOString()}`;
+      worker.port.postMessage(message);
+      
+      const msgEl = document.createElement('div');
+      msgEl.textContent = `Client: ${message}`;
+      messagesEl.appendChild(msgEl);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "sip-worker.js",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:worker": "tsc && vite build --config vite.worker.config.ts",
+    "build:all": "npm run build && npm run build:worker",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.0"
+  },
+  "dependencies": {
+    "sip.js": "^0.21.2"
+  }
+}
