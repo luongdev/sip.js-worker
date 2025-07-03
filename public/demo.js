@@ -1,385 +1,255 @@
+/**
+ * Demo script for SIP Worker
+ */
+
+// Import từ thư viện
+import '../src/style.css';
 import { SipWorker } from '../src/common/types';
 
-// Các biến toàn cục
+// Khởi tạo SharedWorker
 let worker = null;
-let tabId = generateTabId();
-let allTabs = {};
-let messageHistory = [];
+let port = null;
+let tabId = `tab-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+let isRegistered = false;
 
-// Khởi tạo worker và thiết lập các sự kiện
-function initializeWorker() {
+// Các phần tử DOM
+const registerBtn = document.getElementById('registerBtn');
+const unregisterBtn = document.getElementById('unregisterBtn');
+const updateCredentialsBtn = document.getElementById('updateCredentialsBtn');
+const sipUriInput = document.getElementById('sipUri');
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+const displayNameInput = document.getElementById('displayName');
+const wsServerInput = document.getElementById('wsServer');
+const newUsernameInput = document.getElementById('newUsername');
+const newPasswordInput = document.getElementById('newPassword');
+const logContainer = document.getElementById('logContainer');
+
+// Khởi tạo worker
+function initWorker() {
   try {
     worker = new SharedWorker('/src/worker/index.ts', { type: 'module' });
+    port = worker.port;
     
-    worker.port.onmessage = (event) => {
-      const message = event.data;
-      log(`Received message: ${JSON.stringify(message)}`);
-      
-      // Thêm tin nhắn vào lịch sử
-      messageHistory.push({
-        direction: 'received',
-        message: message,
-        timestamp: new Date()
-      });
-      updateMessageList();
-      
-      // Xử lý tin nhắn dựa trên loại
-      handleMessage(message);
-    };
+    // Thiết lập xử lý tin nhắn từ worker
+    port.onmessage = handleWorkerMessage;
     
-    worker.port.onmessageerror = (error) => {
-      log(`Worker message error: ${error}`, 'error');
-    };
+    // Khởi động port
+    port.start();
     
-    worker.onerror = (error) => {
-      log(`Worker error: ${error.message}`, 'error');
-      updateWorkerStatus('error');
-    };
-    
-    // Đăng ký tab với worker
+    // Đăng ký tab
     registerTab();
     
-    updateWorkerStatus('connected');
-    log('Worker initialized successfully');
+    addLog('info', 'Worker initialized successfully');
   } catch (error) {
-    log(`Failed to initialize worker: ${error.message}`, 'error');
-    updateWorkerStatus('error');
+    addLog('error', `Failed to initialize worker: ${error.message}`);
   }
 }
 
-// Đăng ký tab hiện tại với worker
+// Đăng ký tab với worker
 function registerTab() {
-  const message = {
+  sendMessage({
     type: SipWorker.MessageType.TAB_REGISTER,
     id: `register-${Date.now()}`,
-    timestamp: Date.now(),
     tabId: tabId,
+    timestamp: Date.now(),
     data: {
+      id: tabId,
       name: document.title,
       url: window.location.href,
-      state: SipWorker.TabState.ACTIVE,
-      mediaPermission: SipWorker.TabMediaPermission.NOT_REQUESTED
+      state: document.visibilityState === 'visible' ? 
+        (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : 
+        SipWorker.TabState.HIDDEN,
+      lastActiveTime: Date.now(),
+      createdTime: Date.now(),
+      mediaPermission: SipWorker.TabMediaPermission.NOT_REQUESTED,
+      handlingCall: false
     }
-  };
-  
-  sendMessageToWorker(message);
-  updateTabIdDisplay();
+  });
 }
 
 // Gửi tin nhắn đến worker
-function sendMessageToWorker(message) {
-  if (worker && worker.port) {
-    // Thêm tabId nếu chưa có
-    if (!message.tabId) {
-      message.tabId = tabId;
-    }
-    
-    // Thêm timestamp nếu chưa có
-    if (!message.timestamp) {
-      message.timestamp = Date.now();
-    }
-    
-    // Thêm id nếu chưa có
-    if (!message.id) {
-      message.id = `${message.type.toLowerCase()}-${Date.now()}`;
-    }
-    
-    worker.port.postMessage(message);
-    
-    // Thêm tin nhắn vào lịch sử
-    messageHistory.push({
-      direction: 'sent',
-      message: message,
-      timestamp: new Date()
-    });
-    
-    updateMessageList();
-    log(`Sent message: ${JSON.stringify(message)}`);
-  } else {
-    log('Worker not available', 'error');
+function sendMessage(message) {
+  if (!port) {
+    addLog('error', 'Worker not initialized');
+    return;
   }
+  
+  addLog('info', `Sending message: ${message.type}`);
+  port.postMessage(message);
 }
 
-// Xử lý tin nhắn nhận được từ worker
-function handleMessage(message) {
+// Xử lý tin nhắn từ worker
+function handleWorkerMessage(event) {
+  const message = event.data;
+  
+  addLog('info', `Received message: ${message.type}`);
+  
   switch (message.type) {
-    case SipWorker.MessageType.TAB_LIST_UPDATE:
-      updateTabList(message.data.tabs);
-      break;
     case SipWorker.MessageType.WORKER_READY:
-      log('Worker is ready');
+      addLog('info', 'Worker is ready');
       break;
-    case SipWorker.MessageType.PING:
-      log('Received PING, sending PONG');
-      sendMessageToWorker({
-        type: SipWorker.MessageType.PONG,
-        id: `pong-${message.id}`,
-        timestamp: Date.now(),
-        tabId: tabId,
-        data: { timestamp: Date.now() }
-      });
+      
+    case SipWorker.MessageType.SIP_REGISTERED:
+      addLog('info', `SIP registered successfully: ${JSON.stringify(message.data)}`);
+      isRegistered = true;
+      registerBtn.disabled = true;
+      unregisterBtn.disabled = false;
+      updateCredentialsBtn.disabled = false;
       break;
-    case SipWorker.MessageType.PONG:
-      log('Received PONG from worker');
+      
+    case SipWorker.MessageType.SIP_UNREGISTERED:
+      addLog('info', 'SIP unregistered');
+      isRegistered = false;
+      registerBtn.disabled = false;
+      unregisterBtn.disabled = true;
+      updateCredentialsBtn.disabled = true;
       break;
+      
+    case SipWorker.MessageType.SIP_REGISTRATION_FAILED:
+      addLog('error', `SIP registration failed: ${message.data?.error || 'Unknown error'}`);
+      isRegistered = false;
+      registerBtn.disabled = false;
+      unregisterBtn.disabled = true;
+      updateCredentialsBtn.disabled = true;
+      break;
+      
+    case SipWorker.MessageType.LOG:
+      if (message.data) {
+        addLog(message.data.level, message.data.message);
+      }
+      break;
+      
     default:
-      // Xử lý các loại tin nhắn khác nếu cần
-      log(`Received unhandled message type: ${message.type}`);
+      addLog('debug', `Unhandled message type: ${message.type}`);
       break;
   }
 }
 
-// Cập nhật danh sách tab trong UI
-function updateTabList(tabs) {
-  allTabs = tabs || {};
-  const tabListElement = document.getElementById('tab-list');
-  tabListElement.innerHTML = '';
-  
-  Object.values(allTabs).forEach((tabInfo) => {
-    const tabElement = document.createElement('div');
-    tabElement.className = `tab-item ${tabInfo.state.toLowerCase()}`;
-    
-    const tabContent = document.createElement('div');
-    tabContent.textContent = `ID: ${tabInfo.id.substring(0, 8)}... | State: ${tabInfo.state}`;
-    
-    const tabActions = document.createElement('div');
-    
-    if (tabInfo.id !== tabId) {
-      const sendBtn = document.createElement('button');
-      sendBtn.textContent = 'Send';
-      sendBtn.style.padding = '2px 5px';
-      sendBtn.style.marginRight = '5px';
-      sendBtn.style.fontSize = '12px';
-      sendBtn.onclick = () => {
-        document.getElementById('target-tab').value = tabInfo.id;
-      };
-      tabActions.appendChild(sendBtn);
-    }
-    
-    tabElement.appendChild(tabContent);
-    tabElement.appendChild(tabActions);
-    tabListElement.appendChild(tabElement);
-  });
-}
-
-// Cập nhật danh sách tin nhắn trong UI
-function updateMessageList() {
-  const messageListElement = document.getElementById('message-list');
-  messageListElement.innerHTML = '';
-  
-  // Hiển thị 20 tin nhắn gần nhất
-  const recentMessages = messageHistory.slice(-20);
-  
-  recentMessages.forEach(item => {
-    const messageElement = document.createElement('div');
-    messageElement.className = `message-item ${item.direction}`;
-    
-    const time = item.timestamp.toLocaleTimeString();
-    const direction = item.direction === 'sent' ? '→' : '←';
-    const type = item.message.type;
-    
-    messageElement.innerHTML = `
-      <strong>${time} ${direction} ${type}</strong>
-      <pre>${JSON.stringify(item.message, null, 2)}</pre>
-    `;
-    
-    messageListElement.appendChild(messageElement);
-  });
-  
-  // Cuộn xuống tin nhắn mới nhất
-  messageListElement.scrollTop = messageListElement.scrollHeight;
-}
-
-// Cập nhật trạng thái worker trong UI
-function updateWorkerStatus(status) {
-  const statusElement = document.getElementById('worker-status');
-  statusElement.textContent = `Worker Status: ${status}`;
-  statusElement.className = `status ${status}`;
-}
-
-// Cập nhật hiển thị ID tab
-function updateTabIdDisplay() {
-  document.getElementById('tab-id').value = tabId;
-}
-
-// Tạo ID tab ngẫu nhiên
-function generateTabId() {
-  return 'tab_' + Math.random().toString(36).substring(2, 15);
-}
-
-// Ghi log vào UI
-function log(message, level = 'info') {
-  const logContainer = document.getElementById('log-container');
-  const logEntry = document.createElement('p');
+// Thêm log vào container
+function addLog(level, message) {
+  const logEntry = document.createElement('div');
   logEntry.className = `log-entry log-${level}`;
-  
-  const timestamp = new Date().toLocaleTimeString();
-  logEntry.textContent = `[${timestamp}] ${message}`;
-  
+  logEntry.textContent = `[${new Date().toLocaleTimeString()}] [${level.toUpperCase()}] ${message}`;
   logContainer.appendChild(logEntry);
   logContainer.scrollTop = logContainer.scrollHeight;
-  
-  // Log ra console
-  console[level](message);
 }
 
-// Thiết lập các sự kiện cho các nút
-function setupEventListeners() {
-  // Nút cập nhật trạng thái
-  document.getElementById('update-status').addEventListener('click', () => {
-    const status = document.getElementById('tab-status').value;
-    let tabState;
-    
-    switch (status) {
-      case 'active':
-        tabState = SipWorker.TabState.ACTIVE;
-        break;
-      case 'visible':
-        tabState = SipWorker.TabState.VISIBLE;
-        break;
-      case 'hidden':
-        tabState = SipWorker.TabState.HIDDEN;
-        break;
-      default:
-        tabState = SipWorker.TabState.ACTIVE;
+// Đăng ký SIP
+function registerSip() {
+  const sipConfig = {
+    uri: sipUriInput.value,
+    username: usernameInput.value,
+    password: passwordInput.value,
+    displayName: displayNameInput.value
+  };
+  
+  const transportConfig = {
+    server: wsServerInput.value
+  };
+  
+  sendMessage({
+    type: SipWorker.MessageType.SIP_REGISTER,
+    id: `sip-register-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      sipConfig,
+      transportConfig
     }
-    
-    sendMessageToWorker({
-      type: SipWorker.MessageType.TAB_UPDATE_STATE,
-      data: {
-        state: tabState
-      }
-    });
-  });
-  
-  // Nút giả lập timeout
-  document.getElementById('simulate-timeout').addEventListener('click', () => {
-    log('Simulating tab timeout...');
-    
-    // Chọn một tab ngẫu nhiên khác với tab hiện tại
-    const otherTabs = Object.values(allTabs).filter(tab => tab.id !== tabId);
-    
-    if (otherTabs.length > 0) {
-      const randomTab = otherTabs[Math.floor(Math.random() * otherTabs.length)];
-      
-      // Cập nhật trạng thái tab thành HIDDEN
-      sendMessageToWorker({
-        type: SipWorker.MessageType.TAB_UPDATE_STATE,
-        tabId: randomTab.id,
-        data: {
-          state: SipWorker.TabState.HIDDEN
-        }
-      });
-      
-      log(`Simulated timeout for tab: ${randomTab.id}`);
-    } else {
-      log('No other tabs to simulate timeout');
-    }
-  });
-  
-  // Nút mở tab mới
-  document.getElementById('open-new-tab').addEventListener('click', () => {
-    const url = window.location.href;
-    window.open(url, '_blank');
-  });
-  
-  // Nút gửi tin nhắn
-  document.getElementById('send-message').addEventListener('click', () => {
-    const messageTypeSelect = document.getElementById('message-type');
-    const messageType = messageTypeSelect.value;
-    let messageData;
-    
-    try {
-      messageData = JSON.parse(document.getElementById('message-data').value);
-    } catch (error) {
-      log('Invalid JSON data', 'error');
-      return;
-    }
-    
-    const targetTab = document.getElementById('target-tab').value || null;
-    
-    // Tìm MessageType tương ứng trong SipWorker.MessageType
-    let actualMessageType;
-    for (const type in SipWorker.MessageType) {
-      if (SipWorker.MessageType[type] === messageType) {
-        actualMessageType = SipWorker.MessageType[type];
-        break;
-      }
-    }
-    
-    if (!actualMessageType) {
-      log(`Unknown message type: ${messageType}`, 'error');
-      return;
-    }
-    
-    sendMessageToWorker({
-      type: actualMessageType,
-      targetTabId: targetTab,
-      data: messageData
-    });
-  });
-  
-  // Nút xóa tin nhắn
-  document.getElementById('clear-messages').addEventListener('click', () => {
-    messageHistory = [];
-    updateMessageList();
-  });
-  
-  // Nút xóa logs
-  document.getElementById('clear-logs').addEventListener('click', () => {
-    document.getElementById('log-container').innerHTML = '';
-  });
-  
-  // Nút gửi ping
-  document.getElementById('send-ping').addEventListener('click', () => {
-    sendMessageToWorker({
-      type: SipWorker.MessageType.PING,
-      data: { timestamp: Date.now() }
-    });
-  });
-  
-  // Xử lý sự kiện khi tab được đóng
-  window.addEventListener('beforeunload', () => {
-    if (worker && worker.port) {
-      sendMessageToWorker({
-        type: SipWorker.MessageType.TAB_UNREGISTER
-      });
-    }
-  });
-  
-  // Xử lý sự kiện khi tab thay đổi trạng thái hiển thị
-  document.addEventListener('visibilitychange', () => {
-    const state = document.visibilityState === 'visible' ? 
-      SipWorker.TabState.ACTIVE : 
-      SipWorker.TabState.HIDDEN;
-    
-    sendMessageToWorker({
-      type: SipWorker.MessageType.TAB_UPDATE_STATE,
-      data: {
-        state: state
-      }
-    });
-    
-    // Cập nhật dropdown
-    document.getElementById('tab-status').value = state.toLowerCase();
   });
 }
 
-// Khởi tạo ứng dụng
-function initializeApp() {
-  setupEventListeners();
-  initializeWorker();
-  
-  // Gửi ping định kỳ để kiểm tra kết nối
-  setInterval(() => {
-    if (worker && worker.port) {
-      sendMessageToWorker({
-        type: SipWorker.MessageType.PING,
-        data: { timestamp: Date.now() }
-      });
-    }
-  }, 30000); // Mỗi 30 giây
+// Hủy đăng ký SIP
+function unregisterSip() {
+  sendMessage({
+    type: SipWorker.MessageType.SIP_UNREGISTER,
+    id: `sip-unregister-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now()
+  });
 }
 
-// Chạy ứng dụng khi trang đã tải xong
-document.addEventListener('DOMContentLoaded', initializeApp); 
+// Cập nhật thông tin đăng nhập
+function updateCredentials() {
+  sendMessage({
+    type: SipWorker.MessageType.SIP_UPDATE_CREDENTIALS,
+    id: `sip-update-credentials-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      username: newUsernameInput.value,
+      password: newPasswordInput.value
+    }
+  });
+}
+
+// Thiết lập các sự kiện
+registerBtn.addEventListener('click', registerSip);
+unregisterBtn.addEventListener('click', unregisterSip);
+updateCredentialsBtn.addEventListener('click', updateCredentials);
+
+// Khởi tạo worker khi trang được tải
+window.addEventListener('load', initWorker);
+
+// Cập nhật trạng thái tab khi thay đổi visibility
+document.addEventListener('visibilitychange', () => {
+  if (!port) return;
+  
+  const state = document.visibilityState === 'visible' ?
+    (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) :
+    SipWorker.TabState.HIDDEN;
+    
+  sendMessage({
+    type: SipWorker.MessageType.TAB_UPDATE_STATE,
+    id: `tab-update-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      state,
+      lastActiveTime: state === SipWorker.TabState.ACTIVE ? Date.now() : undefined
+    }
+  });
+});
+
+// Cập nhật trạng thái tab khi focus/blur
+window.addEventListener('focus', () => {
+  if (!port) return;
+  
+  sendMessage({
+    type: SipWorker.MessageType.TAB_UPDATE_STATE,
+    id: `tab-update-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      state: SipWorker.TabState.ACTIVE,
+      lastActiveTime: Date.now()
+    }
+  });
+});
+
+window.addEventListener('blur', () => {
+  if (!port) return;
+  
+  sendMessage({
+    type: SipWorker.MessageType.TAB_UPDATE_STATE,
+    id: `tab-update-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now(),
+    data: {
+      state: SipWorker.TabState.VISIBLE
+    }
+  });
+});
+
+// Xử lý khi đóng tab
+window.addEventListener('beforeunload', () => {
+  if (!port) return;
+  
+  sendMessage({
+    type: SipWorker.MessageType.TAB_UNREGISTER,
+    id: `tab-unregister-${Date.now()}`,
+    tabId: tabId,
+    timestamp: Date.now()
+  });
+}); 
