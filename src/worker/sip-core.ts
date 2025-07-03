@@ -55,6 +55,31 @@ export interface SipCoreOptions {
 }
 
 /**
+ * Interface cho thông tin đăng nhập SIP
+ */
+export interface SipCredentials {
+  /**
+   * URI của SIP server
+   */
+  uri?: string;
+
+  /**
+   * Tên người dùng SIP
+   */
+  username?: string;
+
+  /**
+   * Mật khẩu SIP
+   */
+  password?: string;
+
+  /**
+   * Tên hiển thị
+   */
+  displayName?: string;
+}
+
+/**
  * Lớp SipCore xử lý SIP signaling
  */
 export class SipCore {
@@ -204,6 +229,10 @@ export class SipCore {
   private registerMessageHandlers(): void {
     // Handler cho tin nhắn đăng ký SIP
     this.messageBroker.on(SipWorker.MessageType.SIP_REGISTER, async (message) => {
+      // Nếu có thông tin đăng nhập mới trong tin nhắn, cập nhật trước khi đăng ký
+      if (message.data && (message.data.username || message.data.password || message.data.uri || message.data.displayName)) {
+        this.updateCredentials(message.data);
+      }
       return this.register();
     });
 
@@ -211,6 +240,67 @@ export class SipCore {
     this.messageBroker.on(SipWorker.MessageType.SIP_UNREGISTER, async (message) => {
       return this.unregister();
     });
+  }
+
+  /**
+   * Cập nhật thông tin đăng nhập SIP
+   * @param credentials Thông tin đăng nhập mới
+   */
+  public updateCredentials(credentials: SipCredentials): void {
+    let needRestart = false;
+
+    // Cập nhật URI nếu có
+    if (credentials.uri && credentials.uri !== this.sipConfig.uri) {
+      this.sipConfig.uri = credentials.uri;
+      needRestart = true;
+    }
+
+    // Cập nhật username nếu có
+    if (credentials.username !== undefined) {
+      this.sipConfig.username = credentials.username;
+    }
+
+    // Cập nhật password nếu có
+    if (credentials.password !== undefined) {
+      this.sipConfig.password = credentials.password;
+    }
+
+    // Cập nhật displayName nếu có
+    if (credentials.displayName !== undefined) {
+      this.sipConfig.displayName = credentials.displayName;
+    }
+
+    this.log('info', `Credentials updated: username=${this.sipConfig.username}, displayName=${this.sipConfig.displayName}`);
+
+    // Nếu URI thay đổi, cần khởi tạo lại UserAgent
+    if (needRestart && this.userAgent) {
+      this.log('info', 'URI changed, restarting UserAgent');
+      
+      // Lưu trạng thái đăng ký hiện tại
+      const wasRegistered = this.registered;
+      
+      // Hủy đăng ký nếu đang đăng ký
+      if (this.registered) {
+        this.unregister().catch(error => {
+          this.log('error', `Failed to unregister before restart: ${error.message}`);
+        });
+      }
+      
+      // Dừng UserAgent hiện tại
+      this.userAgent.stop().catch(error => {
+        this.log('error', `Failed to stop UserAgent: ${error.message}`);
+      });
+      
+      // Khởi tạo lại UserAgent
+      this.initUserAgent();
+      
+      // Đăng ký lại nếu trước đó đã đăng ký
+      if (wasRegistered) {
+        this.register().catch(error => {
+          this.log('error', `Failed to register after restart: ${error.message}`);
+        });
+      }
+    }
   }
 
   /**
@@ -300,9 +390,15 @@ export class SipCore {
 
   /**
    * Đăng ký SIP
+   * @param credentials Thông tin đăng nhập mới (nếu có)
    * @returns Kết quả đăng ký
    */
-  public async register(): Promise<any> {
+  public async register(credentials?: SipCredentials): Promise<any> {
+    // Nếu có thông tin đăng nhập mới, cập nhật trước
+    if (credentials) {
+      this.updateCredentials(credentials);
+    }
+
     if (!this.userAgent) {
       const error = 'Cannot register: UserAgent not initialized';
       this.log('error', error);
@@ -310,30 +406,34 @@ export class SipCore {
     }
 
     try {
-      // Tạo Registerer nếu chưa có
-      if (!this.registerer) {
-        this.registerer = new Registerer(this.userAgent, {
-          expires: this.sipConfig.registerExpires || 600
-        });
-
-        // Thiết lập các sự kiện
-        this.registerer.stateChange.addListener((state) => {
-          switch (state) {
-            case RegistererState.Registered:
-              this.registered = true;
-              this.log('info', 'SIP registered successfully');
-              this.broadcastRegistrationState(true);
-              break;
-            case RegistererState.Unregistered:
-              this.registered = false;
-              this.log('info', 'SIP unregistered');
-              this.broadcastRegistrationState(false);
-              break;
-            default:
-              break;
-          }
-        });
+      // Hủy registerer cũ nếu có
+      if (this.registerer) {
+        this.registerer.dispose();
+        this.registerer = null;
       }
+
+      // Tạo Registerer mới
+      this.registerer = new Registerer(this.userAgent, {
+        expires: this.sipConfig.registerExpires || 600
+      });
+
+      // Thiết lập các sự kiện
+      this.registerer.stateChange.addListener((state) => {
+        switch (state) {
+          case RegistererState.Registered:
+            this.registered = true;
+            this.log('info', 'SIP registered successfully');
+            this.broadcastRegistrationState(true);
+            break;
+          case RegistererState.Unregistered:
+            this.registered = false;
+            this.log('info', 'SIP unregistered');
+            this.broadcastRegistrationState(false);
+            break;
+          default:
+            break;
+        }
+      });
 
       // Đăng ký
       await this.registerer.register();
