@@ -240,66 +240,105 @@ export class SipCore {
     this.messageBroker.on(SipWorker.MessageType.SIP_UNREGISTER, async (message) => {
       return this.unregister();
     });
+
+    // Handler cho tin nhắn cập nhật thông tin đăng nhập
+    this.messageBroker.on(SipWorker.MessageType.SIP_UPDATE_CREDENTIALS, async (message) => {
+      if (!message.data) {
+        return { success: false, error: 'No credentials provided' };
+      }
+      
+      try {
+        this.updateCredentials(message.data);
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    });
   }
 
   /**
-   * Cập nhật thông tin đăng nhập SIP
+   * Cập nhật thông tin đăng nhập SIP mà không tạo lại UserAgent
    * @param credentials Thông tin đăng nhập mới
    */
   public updateCredentials(credentials: SipCredentials): void {
-    let needRestart = false;
-
-    // Cập nhật URI nếu có
-    if (credentials.uri && credentials.uri !== this.sipConfig.uri) {
-      this.sipConfig.uri = credentials.uri;
-      needRestart = true;
+    if (!this.userAgent) {
+      this.log('error', 'Cannot update credentials: UserAgent not initialized');
+      return;
     }
 
-    // Cập nhật username nếu có
+    // 1. Cập nhật thông tin trong sipConfig
     if (credentials.username !== undefined) {
       this.sipConfig.username = credentials.username;
     }
-
-    // Cập nhật password nếu có
     if (credentials.password !== undefined) {
       this.sipConfig.password = credentials.password;
     }
-
-    // Cập nhật displayName nếu có
     if (credentials.displayName !== undefined) {
       this.sipConfig.displayName = credentials.displayName;
+    }
+    if (credentials.uri !== undefined) {
+      this.sipConfig.uri = credentials.uri;
+    }
+
+    // 2. Hack: Cập nhật trực tiếp các thuộc tính của UserAgent
+    // @ts-ignore - Truy cập thuộc tính private
+    if (this.userAgent.options) {
+      // @ts-ignore - Truy cập thuộc tính private
+      if (credentials.username !== undefined) {
+        // @ts-ignore - Truy cập thuộc tính private
+        this.userAgent.options.authorizationUsername = credentials.username;
+      }
+      // @ts-ignore - Truy cập thuộc tính private
+      if (credentials.password !== undefined) {
+        // @ts-ignore - Truy cập thuộc tính private
+        this.userAgent.options.authorizationPassword = credentials.password;
+      }
+      // @ts-ignore - Truy cập thuộc tính private
+      if (credentials.displayName !== undefined) {
+        // @ts-ignore - Truy cập thuộc tính private
+        this.userAgent.options.displayName = credentials.displayName;
+      }
+    }
+
+    // 3. Hack: Ghi đè authenticationFactory để sử dụng thông tin đăng nhập mới
+    // @ts-ignore - Truy cập thuộc tính private
+    if (this.userAgent.userAgentCore && this.userAgent.userAgentCore.configuration) {
+      // @ts-ignore - Truy cập thuộc tính private
+      const originalAuthFactory = this.userAgent.userAgentCore.configuration.authenticationFactory;
+      
+      // @ts-ignore - Truy cập thuộc tính private
+      this.userAgent.userAgentCore.configuration.authenticationFactory = () => {
+        // Gọi hàm gốc để tạo đối tượng DigestAuthentication
+        const digestAuth = originalAuthFactory();
+        
+        // Nếu có thông tin đăng nhập mới, cập nhật trực tiếp vào đối tượng
+        if (digestAuth) {
+          // @ts-ignore - Truy cập thuộc tính private
+          if (credentials.username !== undefined) {
+            // @ts-ignore - Truy cập thuộc tính private
+            digestAuth.username = credentials.username;
+          }
+          // @ts-ignore - Truy cập thuộc tính private
+          if (credentials.password !== undefined) {
+            // @ts-ignore - Truy cập thuộc tính private
+            digestAuth.password = credentials.password;
+          }
+        }
+        
+        return digestAuth;
+      };
     }
 
     this.log('info', `Credentials updated: username=${this.sipConfig.username}, displayName=${this.sipConfig.displayName}`);
 
-    // Nếu URI thay đổi, cần khởi tạo lại UserAgent
-    if (needRestart && this.userAgent) {
-      this.log('info', 'URI changed, restarting UserAgent');
-      
-      // Lưu trạng thái đăng ký hiện tại
-      const wasRegistered = this.registered;
-      
-      // Hủy đăng ký nếu đang đăng ký
-      if (this.registered) {
-        this.unregister().catch(error => {
-          this.log('error', `Failed to unregister before restart: ${error.message}`);
+    // 4. Nếu đã đăng ký, hủy đăng ký và đăng ký lại để áp dụng thông tin mới
+    if (this.registerer && this.registered) {
+      this.log('info', 'Re-registering with new credentials');
+      this.unregister()
+        .then(() => this.register())
+        .catch(error => {
+          this.log('error', `Failed to re-register with new credentials: ${error.message}`);
         });
-      }
-      
-      // Dừng UserAgent hiện tại
-      this.userAgent.stop().catch(error => {
-        this.log('error', `Failed to stop UserAgent: ${error.message}`);
-      });
-      
-      // Khởi tạo lại UserAgent
-      this.initUserAgent();
-      
-      // Đăng ký lại nếu trước đó đã đăng ký
-      if (wasRegistered) {
-        this.register().catch(error => {
-          this.log('error', `Failed to register after restart: ${error.message}`);
-        });
-      }
     }
   }
 

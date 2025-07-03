@@ -28,6 +28,7 @@ export namespace SipWorker {
     SIP_REGISTERED = 'sip_registered',       // Đã đăng ký SIP thành công
     SIP_UNREGISTERED = 'sip_unregistered',   // Đã hủy đăng ký SIP
     SIP_REGISTRATION_FAILED = 'sip_registration_failed', // Đăng ký SIP thất bại
+    SIP_UPDATE_CREDENTIALS = 'sip_update_credentials', // Cập nhật thông tin đăng nhập SIP
 
     // Tin nhắn cuộc gọi
     CALL_INCOMING = 'call_incoming',         // Có cuộc gọi đến
