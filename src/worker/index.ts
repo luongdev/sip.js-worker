@@ -131,10 +131,6 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
   
-  // Handler TAB_REGISTER và TAB_UNREGISTER được xử lý bởi TabManager tự động
-  
-  // Handler TAB_UPDATE_STATE được xử lý bởi TabManager tự động
-  
   // Handler cho tin nhắn PING
   messageBroker.on(SipWorker.MessageType.PING, async (message, tabId, port) => {
     return {
