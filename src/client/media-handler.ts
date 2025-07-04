@@ -124,6 +124,55 @@ export class MediaHandler {
   }
 
   /**
+   * Handle DTMF request from worker
+   */
+  public async handleDtmfRequest(request: SipWorker.DtmfRequest): Promise<SipWorker.DtmfResponse> {
+    console.log('Handling DTMF request:', request.tones, 'for call:', request.callId);
+
+    try {
+      const sessionState = this.sessions.get(request.callId);
+      if (!sessionState) {
+        throw new Error('Session not found');
+      }
+
+      // Get DTMF sender from the first audio track
+      const sender = sessionState.peerConnection.getSenders().find(s => 
+        s.track && s.track.kind === 'audio'
+      );
+
+      if (!sender) {
+        throw new Error('No audio sender found for DTMF');
+      }
+
+      if (!sender.dtmf) {
+        throw new Error('DTMF not supported');
+      }
+
+      // Send DTMF tones
+      const duration = request.duration || 100;
+      const interToneGap = request.interToneGap || 100;
+      
+      sender.dtmf.insertDTMF(request.tones, duration, interToneGap);
+
+      console.log('DTMF sent successfully:', request.tones);
+
+      return {
+        callId: request.callId,
+        success: true,
+        tones: request.tones
+      };
+    } catch (error: any) {
+      console.error('DTMF request failed:', error);
+      return {
+        callId: request.callId,
+        success: false,
+        tones: request.tones,
+        error: error.message || 'Unknown DTMF error'
+      };
+    }
+  }
+
+  /**
    * Create offer description - inspired by SIP.js getDescription() for offers
    */
   private async createOfferDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {

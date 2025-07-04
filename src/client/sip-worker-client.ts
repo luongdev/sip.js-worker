@@ -162,6 +162,23 @@ export class SipWorkerClient {
       this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
     });
 
+    // Xử lý DTMF requests từ worker
+    this.on(SipWorker.MessageType.DTMF_SEND, async (message) => {
+      const response = await this.mediaHandler.handleDtmfRequest(message.data);
+      // Gửi response về worker với message type tương ứng
+      const responseType = response.success ? 
+        SipWorker.MessageType.DTMF_SENT : 
+        SipWorker.MessageType.DTMF_FAILED;
+      
+      this.sendMessage({
+        type: responseType,
+        id: `dtmf-response-${message.id}`,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        data: response
+      });
+    });
+
     // Xử lý worker ready
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
@@ -428,6 +445,24 @@ export class SipWorkerClient {
       tabId: this.tabId,
       timestamp: Date.now(),
       data: { callId }
+    });
+  }
+
+  /**
+   * Gửi DTMF tones
+   */
+  public sendDtmf(callId: string, tones: string, duration?: number, interToneGap?: number): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.DTMF_SEND,
+      id: `dtmf-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        tones,
+        duration,
+        interToneGap
+      } as SipWorker.DtmfRequest
     });
   }
 

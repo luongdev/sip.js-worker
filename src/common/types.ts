@@ -61,6 +61,11 @@ export namespace SipWorker {
     STATE_SYNC = 'state_sync',               // Worker gửi trạng thái hiện tại
     STATE_CHANGED = 'state_changed',         // Worker thông báo trạng thái đã thay đổi
 
+    // DTMF
+    DTMF_SEND = 'dtmf_send',                 // Gửi DTMF tones
+    DTMF_SENT = 'dtmf_sent',                 // DTMF đã được gửi thành công
+    DTMF_FAILED = 'dtmf_failed',             // DTMF gửi thất bại
+
     // Tin nhắn hệ thống
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
@@ -758,6 +763,56 @@ export namespace SipWorker {
      * ICE candidate (khi có candidate mới)
      */
     candidate?: RTCIceCandidateInit;
+
+    /**
+     * Thông báo lỗi (nếu thất bại)
+     */
+    error?: string;
+  }
+
+  /**
+   * Yêu cầu gửi DTMF
+   */
+  export interface DtmfRequest {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Chuỗi DTMF tones cần gửi (0-9, *, #, A-D)
+     */
+    tones: string;
+
+    /**
+     * Thời gian giữa các tone (ms) - mặc định 100ms
+     */
+    duration?: number;
+
+    /**
+     * Thời gian nghỉ giữa các tone (ms) - mặc định 100ms
+     */
+    interToneGap?: number;
+  }
+
+  /**
+   * Phản hồi DTMF
+   */
+  export interface DtmfResponse {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Có thành công không
+     */
+    success: boolean;
+
+    /**
+     * Chuỗi DTMF tones đã gửi
+     */
+    tones: string;
 
     /**
      * Thông báo lỗi (nếu thất bại)

@@ -1272,6 +1272,41 @@ export class SipCore {
   }
 
   /**
+   * Gửi DTMF tones
+   * @param callId ID của cuộc gọi
+   * @param tones Chuỗi DTMF tones
+   * @param options Tùy chọn DTMF
+   * @returns Promise với kết quả
+   */
+  public async sendDtmf(callId: string, tones: string, options?: any): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Sending DTMF tones: ${tones} for call: ${callId}`);
+
+      // Gửi DTMF qua session
+      const result = session.sessionDescriptionHandler?.sendDtmf(tones, options);
+      
+      if (result) {
+        this.log('info', `DTMF sent successfully: ${tones}`);
+        return { success: true };
+      } else {
+        return { success: false, error: 'Failed to send DTMF' };
+      }
+    } catch (error: any) {
+      this.log('error', `Failed to send DTMF: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Lấy UserAgent
    * @returns UserAgent của SIP.js
    */

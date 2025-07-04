@@ -172,6 +172,55 @@
             background: #f44336;
             border-color: #f44336;
         }
+
+        .dtmf-keypad {
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+
+        .dtmf-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            max-width: 200px;
+            margin: 0 auto;
+        }
+
+        .dtmf-btn {
+            width: 60px;
+            height: 60px;
+            font-size: 18px;
+            font-weight: bold;
+            border: 2px solid #ddd;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .dtmf-btn:hover:not(:disabled) {
+            background: #e3f2fd;
+            border-color: #2196F3;
+            transform: scale(1.05);
+        }
+
+        .dtmf-btn:active {
+            transform: scale(0.95);
+        }
+
+        .dtmf-btn:disabled {
+            background: #f5f5f5;
+            color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .dtmf-input {
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 16px;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
@@ -275,6 +324,32 @@
                     <audio id="remote-audio" controls autoplay></audio>
                 </div>
             </div>
+
+            <!-- DTMF Keypad -->
+            <div class="dtmf-keypad">
+                <h3>DTMF Keypad</h3>
+                <div class="form-group">
+                    <input type="text" id="dtmf-input" class="dtmf-input" placeholder="DTMF tones" readonly>
+                </div>
+                <div class="dtmf-grid">
+                    <button class="dtmf-btn" data-tone="1">1</button>
+                    <button class="dtmf-btn" data-tone="2">2</button>
+                    <button class="dtmf-btn" data-tone="3">3</button>
+                    <button class="dtmf-btn" data-tone="4">4</button>
+                    <button class="dtmf-btn" data-tone="5">5</button>
+                    <button class="dtmf-btn" data-tone="6">6</button>
+                    <button class="dtmf-btn" data-tone="7">7</button>
+                    <button class="dtmf-btn" data-tone="8">8</button>
+                    <button class="dtmf-btn" data-tone="9">9</button>
+                    <button class="dtmf-btn" data-tone="*">*</button>
+                    <button class="dtmf-btn" data-tone="0">0</button>
+                    <button class="dtmf-btn" data-tone="#">#</button>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <button id="dtmf-send" disabled style="width: auto; margin-right: 10px;">Send DTMF</button>
+                    <button id="dtmf-clear" style="width: auto; background: #f44336;">Clear</button>
+                </div>
+            </div>
         </div>
         
         <!-- Logs -->
@@ -319,7 +394,10 @@
             incomingCaller: document.getElementById('incoming-caller'),
             incomingCallId: document.getElementById('incoming-call-id'),
             answerBtn: document.getElementById('answer-btn'),
-            rejectBtn: document.getElementById('reject-btn')
+            rejectBtn: document.getElementById('reject-btn'),
+            dtmfInput: document.getElementById('dtmf-input'),
+            dtmfSend: document.getElementById('dtmf-send'),
+            dtmfClear: document.getElementById('dtmf-clear')
         };
 
         // Initialize client
@@ -338,6 +416,8 @@
                 sipClient.on('call_incoming', handleIncomingCall);
                 sipClient.on('state_sync', handleStateSync);
                 sipClient.on('log', handleLog);
+                sipClient.on('dtmf_sent', handleDtmfSent);
+                sipClient.on('dtmf_failed', handleDtmfFailed);
                 
                 log('info', 'SipWorkerClient initialized with SharedWorker');
             } catch (error) {
@@ -385,6 +465,8 @@
                 if (callInfo.state === 'established') {
                     elements.hangUpBtn.disabled = false;
                     elements.makeCallBtn.disabled = true;
+                    elements.dtmfSend.disabled = false;
+                    updateDtmfButtons(false);
                 }
             }
         }
@@ -395,6 +477,8 @@
                 updateCallStatus('none');
                 elements.hangUpBtn.disabled = true;
                 elements.makeCallBtn.disabled = false;
+                elements.dtmfSend.disabled = true;
+                updateDtmfButtons(true);
                 currentCallId = null;
                 
                 // Hide incoming call UI
@@ -487,6 +571,8 @@
                     if (activeCall.state === 'established') {
                         elements.hangUpBtn.disabled = false;
                         elements.makeCallBtn.disabled = true;
+                        elements.dtmfSend.disabled = false;
+                        updateDtmfButtons(false);
                     } else if (activeCall.state === 'ringing' && activeCall.direction === 'incoming') {
                         // Show incoming call UI
                         elements.incomingCaller.textContent = activeCall.remoteDisplayName || activeCall.remoteUri || 'Unknown';
@@ -501,6 +587,8 @@
                 // No active calls
                 updateCallStatus('none');
                 elements.hangUpBtn.disabled = true;
+                elements.dtmfSend.disabled = true;
+                updateDtmfButtons(true);
                 elements.incomingCall.style.display = 'none';
                 currentCallId = null;
                 
@@ -629,6 +717,53 @@
                 elements.incomingCall.style.display = 'none';
                 log('info', `Rejecting call ${currentCallId}...`);
             }
+        });
+
+        // DTMF Functions
+        function handleDtmfSent(message) {
+            const response = message.data;
+            log('info', `DTMF sent successfully: ${response.tones}`);
+        }
+
+        function handleDtmfFailed(message) {
+            const response = message.data;
+            log('error', `DTMF failed: ${response.error} (tones: ${response.tones})`);
+        }
+
+        function updateDtmfButtons(disabled) {
+            const dtmfButtons = document.querySelectorAll('.dtmf-btn');
+            dtmfButtons.forEach(btn => {
+                btn.disabled = disabled;
+            });
+        }
+
+        // DTMF Button handlers
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('dtmf-btn')) {
+                const tone = e.target.dataset.tone;
+                if (tone) {
+                    elements.dtmfInput.value += tone;
+                    log('info', `Added DTMF tone: ${tone}`);
+                }
+            }
+        });
+
+        elements.dtmfSend.addEventListener('click', () => {
+            const tones = elements.dtmfInput.value.trim();
+            if (tones && currentCallId) {
+                sipClient.sendDtmf(currentCallId, tones);
+                log('info', `Sending DTMF: ${tones}`);
+                elements.dtmfInput.value = ''; // Clear after sending
+            } else if (!currentCallId) {
+                log('error', 'No active call to send DTMF');
+            } else {
+                log('error', 'No DTMF tones to send');
+            }
+        });
+
+        elements.dtmfClear.addEventListener('click', () => {
+            elements.dtmfInput.value = '';
+            log('info', 'DTMF input cleared');
         });
 
         // Logging function

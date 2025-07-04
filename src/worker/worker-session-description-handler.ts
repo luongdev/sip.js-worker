@@ -180,10 +180,63 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
    * Send DTMF tones
    */
   public sendDtmf(tones: string, options?: unknown): boolean {
-    this.logger.debug('WorkerSessionDescriptionHandler.sendDtmf');
-    // Delegate DTMF to the tab
-    // For now, return false to indicate not supported
-    return false;
+    this.logger.debug(`WorkerSessionDescriptionHandler.sendDtmf: ${tones}`);
+    
+    // Delegate DTMF to the tab via message broker
+    this.sendDtmfToTab(tones, options).catch(error => {
+      this.logger.error(`Failed to send DTMF: ${error}`);
+    });
+    
+    // Return true to indicate we're handling it (async)
+    return true;
+  }
+
+  /**
+   * Send DTMF tones to tab
+   */
+  private async sendDtmfToTab(tones: string, options?: any): Promise<void> {
+    // Get the tab handling the call
+    let selectedTab;
+    if (this.selectedTabId) {
+      selectedTab = this.tabManager.getTab(this.selectedTabId);
+    }
+    
+    if (!selectedTab) {
+      selectedTab = await this.tabManager.getSelectedTab();
+      if (!selectedTab) {
+        throw new Error('No tab available for DTMF');
+      }
+    }
+
+    this.logger.debug(`Sending DTMF to tab: ${selectedTab.id}`);
+
+    // Create DTMF request
+    const dtmfRequest: SipWorker.DtmfRequest = {
+      callId: this.sessionId,
+      tones: tones,
+      duration: options?.duration || 100,
+      interToneGap: options?.interToneGap || 100
+    };
+
+    const request: SipWorker.Message<SipWorker.DtmfRequest> = {
+      type: SipWorker.MessageType.DTMF_SEND,
+      id: `dtmf-${Date.now()}`,
+      timestamp: Date.now(),
+      data: dtmfRequest
+    };
+
+    try {
+      const response = await this.messageBroker.request(selectedTab.id, request, 5000);
+      
+      if (response.error) {
+        throw new Error(`Failed to send DTMF: ${response.error.message}`);
+      }
+
+      this.logger.debug(`DTMF sent successfully: ${tones}`);
+    } catch (error) {
+      this.logger.error(`Failed to send DTMF to tab: ${error}`);
+      throw error;
+    }
   }
 
   /**

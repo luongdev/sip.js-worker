@@ -198,6 +198,47 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho DTMF_SEND
+  messageBroker.on(SipWorker.MessageType.DTMF_SEND, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.DtmfRequest;
+      const result = await sipCore.sendDtmf(request.callId, request.tones, {
+        duration: request.duration,
+        interToneGap: request.interToneGap
+      });
+      
+      if (result.success) {
+        // Gửi phản hồi thành công về tab
+        messageBroker.sendToTab(tabId, {
+          type: SipWorker.MessageType.DTMF_SENT,
+          id: `dtmf-sent-${Date.now()}`,
+          timestamp: Date.now(),
+          data: {
+            callId: request.callId,
+            success: true,
+            tones: request.tones
+          } as SipWorker.DtmfResponse
+        });
+      } else {
+        // Gửi phản hồi thất bại về tab
+        messageBroker.sendToTab(tabId, {
+          type: SipWorker.MessageType.DTMF_FAILED,
+          id: `dtmf-failed-${Date.now()}`,
+          timestamp: Date.now(),
+          data: {
+            callId: request.callId,
+            success: false,
+            tones: request.tones,
+            error: result.error
+          } as SipWorker.DtmfResponse
+        });
+      }
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho session ready từ tab  
   messageBroker.on(SipWorker.MessageType.MEDIA_SESSION_READY, async (message, tabId, port) => {
     console.log('Worker received session ready from tab:', tabId, message.data);
