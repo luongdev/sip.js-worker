@@ -479,6 +479,7 @@ export class SipCore {
         },
         extraHeaders: extraHeaders,
         params: { callId },
+        earlyMedia: true, // Enable early media support
       } as InviterOptions as any;
       
       // Tạo Inviter với custom Call-ID thông qua params
@@ -549,6 +550,33 @@ export class SipCore {
                   reason: `${statusCode} ${reasonPhrase}`
                 }
               });
+            },
+            onProgress: (response) => {
+              // Handle provisional responses (18x) for early media
+              const statusCode = response.message.statusCode;
+              const reasonPhrase = response.message.reasonPhrase;
+              
+              this.log('info', `Call ${callId} progress: ${statusCode} ${reasonPhrase}`);
+              
+              // Update call state based on provisional response
+              if (statusCode === 180) {
+                callInfo.state = SipWorker.CallState.RINGING;
+                this.broadcastCallStatus(callInfo);
+              } else if (statusCode === 183) {
+                // Session Progress - early media available
+                callInfo.state = SipWorker.CallState.RINGING;
+                this.broadcastCallStatus(callInfo);
+                
+                // Check if response has SDP for early media
+                const body = response.message.body;
+                if (body && body.includes('application/sdp')) {
+                  this.log('info', `Early media SDP received for call ${callId}, SDP length: ${body.length}`);
+                  this.log('debug', `Early media SDP: ${body.substring(0, 200)}...`);
+                  // SIP.js will automatically handle early media setup when earlyMedia: true
+                } else {
+                  this.log('info', `Early media indication (no SDP) for call ${callId}`);
+                }
+              }
             }
           }
         });

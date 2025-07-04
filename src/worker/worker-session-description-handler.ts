@@ -7,6 +7,7 @@ import { SipWorker } from '../common/types';
 /**
  * Custom SessionDescriptionHandler for Worker mode
  * Redirects all media operations to the appropriate tab instead of handling them in worker
+ * Supports early media by handling multiple descriptions
  */
 export class WorkerSessionDescriptionHandler implements SDHInterface {
   private logger: Logger;
@@ -14,17 +15,21 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
   private tabManager: TabManager;
   private sessionId: string;
   private isClosed: boolean = false;
+  private isEarlyMedia: boolean = false;
+  private selectedTabId?: string;
 
   constructor(
     logger: Logger,
     messageBroker: MessageBroker,
     tabManager: TabManager,
-    sessionId: string
+    sessionId: string,
+    isEarlyMedia: boolean = false
   ) {
     this.logger = logger;
     this.messageBroker = messageBroker;
     this.tabManager = tabManager;
     this.sessionId = sessionId;
+    this.isEarlyMedia = isEarlyMedia;
   }
 
   /**
@@ -48,13 +53,21 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       throw new Error('SessionDescriptionHandler is closed');
     }
 
-    // Get the best tab to handle media
-    const selectedTab = await this.tabManager.getSelectedTab();
+    // Get the best tab to handle media (use cached tab for consistency)
+    let selectedTab;
+    if (this.selectedTabId) {
+      selectedTab = this.tabManager.getTab(this.selectedTabId);
+    }
+    
     if (!selectedTab) {
-      throw new Error('No tab available for media handling');
+      selectedTab = await this.tabManager.getSelectedTab();
+      if (!selectedTab) {
+        throw new Error('No tab available for media handling');
+      }
+      this.selectedTabId = selectedTab.id;
     }
 
-    this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id}`);
+    this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, sessionId: ${this.sessionId})`);
 
     // Send media request to tab
     const mediaRequest: SipWorker.MediaRequest = {
@@ -137,13 +150,21 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       throw new Error('SessionDescriptionHandler is closed');
     }
 
-    // Get the best tab to handle media
-    const selectedTab = await this.tabManager.getSelectedTab();
+    // Get the best tab to handle media (use cached tab for consistency)
+    let selectedTab;
+    if (this.selectedTabId) {
+      selectedTab = this.tabManager.getTab(this.selectedTabId);
+    }
+    
     if (!selectedTab) {
-      throw new Error('No tab available for media handling');
+      selectedTab = await this.tabManager.getSelectedTab();
+      if (!selectedTab) {
+        throw new Error('No tab available for media handling');
+      }
+      this.selectedTabId = selectedTab.id;
     }
 
-    this.logger.debug(`Setting remote SDP for tab: ${selectedTab.id}`);
+    this.logger.debug(`Setting remote SDP for tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, sessionId: ${this.sessionId})`);
 
     // Send remote SDP to tab
     const mediaRequest: SipWorker.MediaRequest = {
@@ -198,11 +219,15 @@ export function createWorkerSessionDescriptionHandlerFactory(
     
     const sessionId = session.id || `session-${Date.now()}`;
     
+    // Check if this is for early media (based on session type or options)
+    const isEarlyMedia = options?.isEarlyMedia || false;
+    
     return new WorkerSessionDescriptionHandler(
       logger,
       messageBroker,
       tabManager,
-      sessionId
+      sessionId,
+      isEarlyMedia
     );
   };
 } 

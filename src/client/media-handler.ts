@@ -60,11 +60,13 @@ export class MediaHandler {
    * Default configuration inspired by SIP.js defaults
    */
   private static readonly DEFAULT_CONFIG: MediaHandlerConfiguration = {
-    iceGatheringTimeout: 5000,
+    iceGatheringTimeout: 10000, // Increased from 5000 to 10000ms
     peerConnectionConfiguration: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' }
       ],
       bundlePolicy: 'balanced',
       rtcpMuxPolicy: 'require'
@@ -325,14 +327,28 @@ export class MediaHandler {
     // ICE candidate handler
     pc.addEventListener('icecandidate', (event) => {
       if (event.candidate) {
+        console.log('ICE candidate generated:', event.candidate.candidate);
         this.sendIceCandidateToWorker(sessionId, event.candidate);
       } else {
         // ICE gathering complete
+        console.log('ICE gathering complete for session:', sessionId);
         sessionState.iceGatheringComplete = true;
+        
+        // Clear timeout
+        if (sessionState.iceGatheringTimeoutId) {
+          clearTimeout(sessionState.iceGatheringTimeoutId);
+          sessionState.iceGatheringTimeoutId = undefined;
+        }
+        
         if (sessionState.iceGatheringResolve) {
           sessionState.iceGatheringResolve();
         }
       }
+    });
+
+    // ICE gathering state change
+    pc.addEventListener('icegatheringstatechange', () => {
+      console.log(`ICE gathering state changed to: ${pc.iceGatheringState} for session: ${sessionId}`);
     });
 
     // ICE connection state change
@@ -441,12 +457,17 @@ export class MediaHandler {
    */
   private async waitForIceGatheringComplete(sessionState: SessionState): Promise<void> {
     if (sessionState.iceGatheringComplete) {
+      console.log('ICE gathering already complete');
       return Promise.resolve();
     }
 
     if (sessionState.iceGatheringPromise) {
+      console.log('ICE gathering already in progress, waiting...');
       return sessionState.iceGatheringPromise;
     }
+
+    console.log(`Starting ICE gathering with timeout: ${this.configuration.iceGatheringTimeout}ms`);
+    const startTime = Date.now();
 
     sessionState.iceGatheringPromise = new Promise<void>((resolve, reject) => {
       sessionState.iceGatheringResolve = resolve;
@@ -455,7 +476,8 @@ export class MediaHandler {
       // Set timeout
       if (this.configuration.iceGatheringTimeout! > 0) {
         sessionState.iceGatheringTimeoutId = setTimeout(() => {
-          console.warn('ICE gathering timeout, proceeding anyway');
+          const duration = Date.now() - startTime;
+          console.warn(`ICE gathering timeout after ${duration}ms, proceeding anyway`);
           sessionState.iceGatheringComplete = true;
           resolve();
         }, this.configuration.iceGatheringTimeout) as any;
