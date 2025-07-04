@@ -201,7 +201,20 @@ function registerMessageHandlers() {
   // Handler cho DTMF_SEND
   messageBroker.on(SipWorker.MessageType.DTMF_SEND, async (message, tabId, port) => {
     if (sipCore) {
+      // Validate message data
+      if (!message.data || typeof message.data !== 'object') {
+        console.error('Invalid DTMF_SEND message - missing data:', message);
+        return { success: false, error: 'Invalid DTMF request: missing data' };
+      }
+      
       const request = message.data as SipWorker.DtmfRequest;
+      
+      // Validate required fields
+      if (!request.callId || !request.tones) {
+        console.error('Invalid DTMF_SEND message - missing callId or tones:', request);
+        return { success: false, error: 'Invalid DTMF request: missing callId or tones' };
+      }
+      
       const result = await sipCore.sendDtmf(request.callId, request.tones, {
         duration: request.duration,
         interToneGap: request.interToneGap

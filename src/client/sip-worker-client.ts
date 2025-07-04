@@ -193,10 +193,10 @@ export class SipWorkerClient {
     });
 
     // Xử lý WebRTC DTMF requests từ worker (preferred method)
-    this.on(SipWorker.MessageType.DTMF_SEND, async (message) => {
+    this.on(SipWorker.MessageType.DTMF_REQUEST_WEBRTC, async (message) => {
      
      
-      console.log('Client received DTMF_SEND message:', message);
+      console.log('Client received DTMF_REQUEST_WEBRTC message:', message);
       
       // Skip if this is not a proper DTMF request
       if (!message.data || typeof message.data !== 'object') {

@@ -1398,7 +1398,7 @@ export class SipCore {
     };
 
     const request: SipWorker.Message<SipWorker.DtmfRequest> = {
-      type: SipWorker.MessageType.DTMF_SEND,
+      type: SipWorker.MessageType.DTMF_REQUEST_WEBRTC,
       id: `dtmf-webrtc-${Date.now()}`,
       timestamp: Date.now(),
       data: dtmfRequest
@@ -1433,7 +1433,9 @@ export class SipCore {
 
         const dtmfSentUnsubscribe = this.messageBroker.on(SipWorker.MessageType.DTMF_SENT, async (message) => {
           const response = message.data as SipWorker.DtmfResponse;
-          if (response && response.callId === callId && !isResolved) {
+          // Match both callId and request ID to prevent race conditions between multiple DTMF requests
+          // Client sends response with ID pattern: "dtmf-response-{originalRequestId}"
+          if (response && response.callId === callId && message.id.includes(request.id) && !isResolved) {
             cleanup();
             resolve({ success: true });
           }
@@ -1441,7 +1443,9 @@ export class SipCore {
 
         const dtmfFailedUnsubscribe = this.messageBroker.on(SipWorker.MessageType.DTMF_FAILED, async (message) => {
           const response = message.data as SipWorker.DtmfResponse;
-          if (response && response.callId === callId && !isResolved) {
+          // Match both callId and request ID to prevent race conditions between multiple DTMF requests  
+          // Client sends response with ID pattern: "dtmf-response-{originalRequestId}"
+          if (response && response.callId === callId && message.id.includes(request.id) && !isResolved) {
             cleanup();
             resolve({ success: false, error: response.error || 'WebRTC DTMF failed' });
           }
