@@ -414,7 +414,40 @@ export class SipCore {
    * @param invitation Invitation từ SIP.js
    */
   private handleIncomingCall(invitation: Invitation): void {
-    // TODO: Implement trong bước tiếp theo
+    // Lấy Call-ID từ SIP header (chính xác)
+    const callId = invitation.request.callId;
+    
+    this.log('info', `Incoming call received: ${callId} from ${invitation.remoteIdentity.uri}`);
+    
+    // Tạo thông tin cuộc gọi
+    const callInfo: SipWorker.CallInfo = {
+      id: callId,
+      direction: SipWorker.CallDirection.INCOMING,
+      state: SipWorker.CallState.RINGING,
+      remoteUri: invitation.remoteIdentity.uri.toString(),
+      remoteDisplayName: invitation.remoteIdentity.displayName || undefined,
+      startTime: Date.now()
+    };
+    
+    // Lưu cuộc gọi vào danh sách
+    this.activeCalls.set(callId, invitation);
+    
+    // Thiết lập event listeners cho invitation
+    this.setupInvitationListeners(invitation, callInfo);
+    
+    // Broadcast thông báo cuộc gọi đến
+    this.messageBroker.broadcast({
+      type: SipWorker.MessageType.CALL_INCOMING,
+      id: `incoming-call-${Date.now()}`,
+      timestamp: Date.now(),
+      data: callInfo
+    });
+    
+    // Nếu có auto accept, tự động chấp nhận cuộc gọi
+    if (this.autoAcceptCalls) {
+      this.log('info', `Auto-accepting incoming call: ${callId}`);
+      this.acceptCall(callId);
+    }
   }
 
   /**
@@ -644,6 +677,101 @@ export class SipCore {
   }
 
   /**
+   * Chấp nhận cuộc gọi đến
+   * @param callId ID của cuộc gọi cần chấp nhận
+   * @returns Promise với kết quả
+   */
+  public async acceptCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return {
+          success: false,
+          error: `Call not found: ${callId}`
+        };
+      }
+
+      // Kiểm tra xem đây có phải là Invitation không
+      if (!(session instanceof Invitation)) {
+        return {
+          success: false,
+          error: `Call ${callId} is not an incoming call`
+        };
+      }
+
+      this.log('info', `Accepting incoming call: ${callId}`);
+
+      // Chấp nhận cuộc gọi với media constraints
+      await session.accept({
+        sessionDescriptionHandlerOptions: {
+          constraints: {
+            audio: true,
+            video: false
+          }
+        }
+      });
+
+      this.log('info', `Call ${callId} accepted successfully`);
+      return { success: true };
+
+    } catch (error: any) {
+      this.log('error', `Failed to accept call ${callId}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message || 'Unknown error occurred'
+      };
+    }
+  }
+
+  /**
+   * Từ chối cuộc gọi đến
+   * @param callId ID của cuộc gọi cần từ chối
+   * @param statusCode SIP status code (mặc định 486 Busy Here)
+   * @param reasonPhrase Reason phrase (mặc định "Busy Here")
+   * @returns Promise với kết quả
+   */
+  public async rejectCall(callId: string, statusCode: number = 486, reasonPhrase: string = 'Busy Here'): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return {
+          success: false,
+          error: `Call not found: ${callId}`
+        };
+      }
+
+      // Kiểm tra xem đây có phải là Invitation không
+      if (!(session instanceof Invitation)) {
+        return {
+          success: false,
+          error: `Call ${callId} is not an incoming call`
+        };
+      }
+
+      this.log('info', `Rejecting incoming call: ${callId} with ${statusCode} ${reasonPhrase}`);
+
+      // Từ chối cuộc gọi
+      await session.reject({
+        statusCode,
+        reasonPhrase
+      });
+
+      // Cleanup
+      this.activeCalls.delete(callId);
+
+      this.log('info', `Call ${callId} rejected successfully`);
+      return { success: true };
+
+    } catch (error: any) {
+      this.log('error', `Failed to reject call ${callId}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message || 'Unknown error occurred'
+      };
+    }
+  }
+
+  /**
    * Kết thúc cuộc gọi
    * @param callId ID của cuộc gọi cần kết thúc
    * @returns Promise với kết quả
@@ -700,6 +828,48 @@ export class SipCore {
         error: error.message || 'Unknown error occurred'
       };
     }
+  }
+
+  /**
+   * Thiết lập event listeners cho Invitation (cuộc gọi đến)
+   * @param invitation Invitation instance
+   * @param callInfo Thông tin cuộc gọi
+   */
+  private setupInvitationListeners(invitation: Invitation, callInfo: SipWorker.CallInfo): void {
+    // Khi trạng thái invitation thay đổi
+    invitation.stateChange.addListener((state) => {
+      this.log('info', `Incoming call ${callInfo.id} state changed to: ${state}`);
+      
+      switch (state) {
+        case SessionState.Establishing:
+          callInfo.state = SipWorker.CallState.CONNECTING;
+          this.broadcastCallStatus(callInfo);
+          break;
+        case SessionState.Established:
+          callInfo.state = SipWorker.CallState.ESTABLISHED;
+          callInfo.establishedTime = Date.now();
+          this.broadcastCallStatus(callInfo);
+          break;
+        case SessionState.Terminated:
+          callInfo.state = SipWorker.CallState.TERMINATED;
+          callInfo.endTime = Date.now();
+          this.activeCalls.delete(callInfo.id);
+          this.broadcastCallStatus(callInfo);
+          
+          // Broadcast CALL_TERMINATED để reset UI
+          this.messageBroker.broadcast({
+            type: SipWorker.MessageType.CALL_TERMINATED,
+            id: `call-terminated-${Date.now()}`,
+            timestamp: Date.now(),
+            data: {
+              id: callInfo.id,
+              state: SipWorker.CallState.TERMINATED,
+              endTime: Date.now()
+            }
+          });
+          break;
+      }
+    });
   }
 
   /**

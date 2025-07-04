@@ -23,7 +23,8 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     messageBroker: MessageBroker,
     tabManager: TabManager,
     sessionId: string,
-    isEarlyMedia: boolean = false
+    isEarlyMedia: boolean = false,
+    private session?: any // SIP.js session để detect context
   ) {
     this.logger = logger;
     this.messageBroker = messageBroker;
@@ -69,19 +70,38 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
 
     this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, sessionId: ${this.sessionId})`);
 
+    // Determine if we need offer or answer based on SIP.js session context
+    let requestType: 'offer' | 'answer' = 'offer'; // Default to offer
+    
+    if (this.session) {
+      // Check if this is an incoming call (Invitation) that needs an answer
+      // In SIP.js, Invitation.accept() calls getDescription() to create an answer
+      const sessionConstructorName = this.session.constructor.name;
+      if (sessionConstructorName === 'Invitation') {
+        requestType = 'answer';
+        this.logger.debug(`Detected Invitation session, requesting answer`);
+      } else {
+        this.logger.debug(`Detected ${sessionConstructorName} session, requesting offer`);
+      }
+    }
+    
     // Send media request to tab
     const mediaRequest: SipWorker.MediaRequest = {
       sessionId: this.sessionId,
-      type: 'offer',
+      type: requestType,
       constraints: {
         audio: true,
         video: false
       }
     };
 
+    const messageType = requestType === 'offer' ? 
+      SipWorker.MessageType.MEDIA_GET_OFFER : 
+      SipWorker.MessageType.MEDIA_GET_ANSWER;
+
     const request: SipWorker.Message<SipWorker.MediaRequest> = {
-      type: SipWorker.MessageType.MEDIA_GET_OFFER,
-      id: `media-offer-${Date.now()}`,
+      type: messageType,
+      id: `media-${requestType}-${Date.now()}`,
       timestamp: Date.now(),
       data: mediaRequest
     };
@@ -227,7 +247,8 @@ export function createWorkerSessionDescriptionHandlerFactory(
       messageBroker,
       tabManager,
       sessionId,
-      isEarlyMedia
+      isEarlyMedia,
+      session // Pass session để detect context
     );
   };
 } 

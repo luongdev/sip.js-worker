@@ -340,6 +340,45 @@ export class SipWorkerClient {
   }
 
   /**
+   * Chấp nhận cuộc gọi đến
+   */
+  public answerCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_ANSWER,
+      id: `answer-call-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: { callId }
+    });
+  }
+
+  /**
+   * Từ chối cuộc gọi đến
+   */
+  public rejectCall(callId: string, statusCode?: number, reasonPhrase?: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_REJECT,
+      id: `reject-call-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: { callId, statusCode, reasonPhrase }
+    });
+  }
+
+  /**
+   * Kết thúc cuộc gọi
+   */
+  public hangupCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_HANGUP,
+      id: `hangup-call-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: { callId }
+    });
+  }
+
+  /**
    * Cập nhật quyền media
    */
   public updateMediaPermission(permission: SipWorker.TabMediaPermission): void {

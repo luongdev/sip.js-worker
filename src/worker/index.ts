@@ -149,6 +149,24 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho tin nhắn CALL_ANSWER (chấp nhận cuộc gọi đến)
+  messageBroker.on(SipWorker.MessageType.CALL_ANSWER, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as { callId: string };
+      return await sipCore.acceptCall(request.callId);
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho tin nhắn CALL_REJECT (từ chối cuộc gọi đến)
+  messageBroker.on(SipWorker.MessageType.CALL_REJECT, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as { callId: string; statusCode?: number; reasonPhrase?: string };
+      return await sipCore.rejectCall(request.callId, request.statusCode, request.reasonPhrase);
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho ICE candidate từ tab
   messageBroker.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message, tabId, port) => {
     console.log('Worker received ICE candidate from tab:', tabId, message.data);

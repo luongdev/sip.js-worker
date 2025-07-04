@@ -138,6 +138,40 @@
             width: 100%;
             margin-top: 10px;
         }
+
+        .incoming-call {
+            background: #e3f2fd;
+            border: 2px solid #2196F3;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { border-color: #2196F3; }
+            50% { border-color: #FF9800; }
+            100% { border-color: #2196F3; }
+        }
+
+        .incoming-call h3 {
+            margin-top: 0;
+            color: #1976D2;
+        }
+
+        .incoming-call button {
+            margin-right: 10px;
+        }
+
+        #answer-btn {
+            background: #4CAF50;
+            border-color: #4CAF50;
+        }
+
+        #reject-btn {
+            background: #f44336;
+            border-color: #f44336;
+        }
     </style>
 </head>
 <body>
@@ -204,6 +238,21 @@
                 <button id="hang-up-btn" disabled>Hang Up</button>
             </div>
 
+            <!-- Incoming Call -->
+            <div id="incoming-call" class="incoming-call" style="display: none;">
+                <h3>Incoming Call</h3>
+                <div class="form-group">
+                    <label>From:</label>
+                    <span id="incoming-caller"></span>
+                </div>
+                <div class="form-group">
+                    <label>Call ID:</label>
+                    <span id="incoming-call-id"></span>
+                </div>
+                <button id="answer-btn">Answer</button>
+                <button id="reject-btn">Reject</button>
+            </div>
+
             <!-- Media Controls -->
             <div class="media-controls">
                 <h3>Media Controls</h3>
@@ -265,7 +314,12 @@
             sipStatus: document.getElementById('sip-status'),
             sipText: document.getElementById('sip-text'),
             callStatus: document.getElementById('call-status'),
-            callText: document.getElementById('call-text')
+            callText: document.getElementById('call-text'),
+            incomingCall: document.getElementById('incoming-call'),
+            incomingCaller: document.getElementById('incoming-caller'),
+            incomingCallId: document.getElementById('incoming-call-id'),
+            answerBtn: document.getElementById('answer-btn'),
+            rejectBtn: document.getElementById('reject-btn')
         };
 
         // Initialize client
@@ -281,6 +335,7 @@
                 sipClient.on('sip_registration_failed', handleSipRegistrationFailed);
                 sipClient.on('call_progress', handleCallProgress);
                 sipClient.on('call_terminated', handleCallTerminated);
+                sipClient.on('call_incoming', handleIncomingCall);
                 sipClient.on('log', handleLog);
                 
                 log('info', 'SipWorkerClient initialized with SharedWorker');
@@ -341,6 +396,9 @@
                 elements.makeCallBtn.disabled = false;
                 currentCallId = null;
                 
+                // Hide incoming call UI
+                elements.incomingCall.style.display = 'none';
+                
                 // Tạo thông báo chi tiết với SIP status code
                 let terminationMessage = `Call ${callInfo.id} terminated`;
                 if (callInfo.statusCode) {
@@ -368,6 +426,20 @@
                 elements.localAudio.srcObject = null;
                 elements.remoteAudio.srcObject = null;
             }
+        }
+
+        function handleIncomingCall(message) {
+            const callData = message.data || {};
+            log('info', `Incoming call from: ${callData.remoteUri}`);
+            
+            // Show incoming call UI
+            elements.incomingCaller.textContent = callData.remoteDisplayName || callData.remoteUri;
+            elements.incomingCallId.textContent = callData.id;
+            elements.incomingCall.style.display = 'block';
+            
+            // Update call status
+            currentCallId = callData.id;
+            updateCallStatus('Incoming');
         }
 
         function handleLog(message) {
@@ -472,6 +544,22 @@
                     track.enabled = !e.target.checked;
                 });
                 log('info', `Audio ${e.target.checked ? 'muted' : 'unmuted'}`);
+            }
+        });
+
+        elements.answerBtn.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.answerCall(currentCallId);
+                elements.incomingCall.style.display = 'none';
+                log('info', `Answering call ${currentCallId}...`);
+            }
+        });
+
+        elements.rejectBtn.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.rejectCall(currentCallId);
+                elements.incomingCall.style.display = 'none';
+                log('info', `Rejecting call ${currentCallId}...`);
             }
         });
 
