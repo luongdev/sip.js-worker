@@ -145,11 +145,52 @@ export class SipWorkerClient {
       // Thiết lập error handler
       this.port.onmessageerror = (error) => {
         console.error('SharedWorker message error:', error);
+        this.emitEvent('error', {
+          type: SipWorker.MessageType.ERROR,
+          id: `error-${Date.now()}`,
+          timestamp: Date.now(),
+          error: {
+            code: 'MESSAGE_ERROR',
+            message: `SharedWorker message error: ${error.data || 'Unknown error'}`
+          }
+        });
       };
 
+      // Thiết lập worker error handler
       this.worker.onerror = (error) => {
         console.error('SharedWorker error:', error);
+        this.connected = false;
+        this.emitEvent('error', {
+          type: SipWorker.MessageType.ERROR,
+          id: `error-${Date.now()}`,
+          timestamp: Date.now(),
+          error: {
+            code: 'WORKER_ERROR',
+            message: `SharedWorker error: ${error.message || error.filename}:${error.lineno}`
+          }
+        });
       };
+
+      // Connection timeout - worker should respond within 5 seconds
+      const connectionTimeout = setTimeout(() => {
+        if (!this.connected) {
+          console.error('SharedWorker connection timeout');
+          this.emitEvent('error', {
+            type: SipWorker.MessageType.ERROR,
+            id: `error-${Date.now()}`,
+            timestamp: Date.now(),
+            error: {
+              code: 'CONNECTION_TIMEOUT',
+              message: 'SharedWorker connection timeout after 5 seconds'
+            }
+          });
+        }
+      }, 5000);
+
+      // Clear timeout when connected
+      this.on('worker_ready', () => {
+        clearTimeout(connectionTimeout);
+      });
 
       // Bắt đầu kết nối
       this.port.start();
