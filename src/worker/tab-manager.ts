@@ -4,6 +4,7 @@
 
 import { SipWorker } from '../common/types';
 import { MessageBroker } from './message-broker';
+import { WorkerState } from './worker-state';
 
 /**
  * Interface cho tùy chọn khởi tạo TabManager
@@ -35,6 +36,11 @@ export class TabManager {
   private messageBroker: MessageBroker;
 
   /**
+   * WorkerState để lấy trạng thái hiện tại
+   */
+  private workerState: WorkerState;
+
+  /**
    * ID của tab đang được chọn để xử lý cuộc gọi
    */
   private selectedTabId: string | null = null;
@@ -47,10 +53,12 @@ export class TabManager {
   /**
    * Khởi tạo TabManager
    * @param messageBroker MessageBroker để giao tiếp với các tab
+   * @param workerState WorkerState để lấy trạng thái hiện tại
    * @param options Tùy chọn khởi tạo
    */
-  constructor(messageBroker: MessageBroker, options?: TabManagerOptions) {
+  constructor(messageBroker: MessageBroker, workerState: WorkerState, options?: TabManagerOptions) {
     this.messageBroker = messageBroker;
+    this.workerState = workerState;
 
     if (options?.tabSelectionTimeout !== undefined) {
       this.tabSelectionTimeout = options.tabSelectionTimeout;
@@ -67,7 +75,12 @@ export class TabManager {
     // Xử lý tin nhắn đăng ký tab mới
     this.messageBroker.on(SipWorker.MessageType.TAB_REGISTER, async (message, tabId, port) => {
       const tabInfo = message.data as Partial<SipWorker.TabInfo>;
-      return this.registerTab(tabId, tabInfo);
+      const result = this.registerTab(tabId, tabInfo);
+      
+      // STATE_SYNC is now handled by MessageBroker.registerTab()
+      // No need to send duplicate state sync here
+      
+      return result;
     });
 
     // Xử lý tin nhắn hủy đăng ký tab
@@ -87,9 +100,9 @@ export class TabManager {
    * Đăng ký tab mới
    * @param tabId ID của tab
    * @param tabInfo Thông tin về tab
-   * @returns Thông tin đã được cập nhật về tab
+   * @returns Object với thông tin tab và flag isNewTab
    */
-  public registerTab(tabId: string, tabInfo: Partial<SipWorker.TabInfo>): SipWorker.TabInfo {
+  public registerTab(tabId: string, tabInfo: Partial<SipWorker.TabInfo>): { tabInfo: SipWorker.TabInfo, isNewTab: boolean } {
     // Kiểm tra xem tab đã tồn tại chưa
     const existingTab = this.tabs.get(tabId);
     
@@ -103,7 +116,7 @@ export class TabManager {
       
       this.tabs.set(tabId, updatedTab);
       console.log(`Tab đã cập nhật: ${tabId}`);
-      return updatedTab;
+      return { tabInfo: updatedTab, isNewTab: false };
     } else {
       // Tạo thông tin tab mới
       const newTab: SipWorker.TabInfo = {
@@ -120,7 +133,7 @@ export class TabManager {
       
       this.tabs.set(tabId, newTab);
       console.log(`Tab mới đã đăng ký: ${tabId}`);
-      return newTab;
+      return { tabInfo: newTab, isNewTab: true };
     }
   }
 

@@ -79,7 +79,7 @@ export class SipWorkerClient {
     this.mediaHandler = new MediaHandler(mediaCallbacks);
     
     // Khởi tạo SharedWorker
-    this.initWorker(workerPath);
+    this.initWorker(workerPath, type);
     
     // Đăng ký media handlers
     this.registerMediaHandlers();
@@ -162,38 +162,16 @@ export class SipWorkerClient {
       this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
     });
 
-    // this.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message) => {
-    //   console.log('MEDIA_ICE_CANDIDATE handler - message:', message);
-    //   console.log('MEDIA_ICE_CANDIDATE handler - message.data:', message.data);
-    //   const response = await this.mediaHandler.handleMediaRequest(message.data);
-    //   this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
-    // });
-
     // Xử lý worker ready
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
-      console.log('Connected to worker');
       
-      // Auto request state sync when connected
+      this.requestStateSync();
+      
       setTimeout(() => {
-        this.requestStateSync();
-        // Also detect and update media permission
         this.detectAndUpdateMediaPermission();
+        this.setupTabStateTracking();
       }, 100); // Small delay to ensure worker is fully ready
-    });
-
-    // Xử lý state sync từ worker
-    this.on(SipWorker.MessageType.STATE_SYNC, (message) => {
-      console.log('Received state sync from worker:', message.data);
-      // Forward state to any listeners
-      this.handleStateSync(message.data);
-    });
-
-    // Xử lý state changed từ worker
-    this.on(SipWorker.MessageType.STATE_CHANGED, (message) => {
-      console.log('Worker state changed:', message.data);
-      // Forward state change to any listeners
-      this.handleStateChange(message.data);
     });
 
     // Xử lý call terminated để reset UI
@@ -214,8 +192,6 @@ export class SipWorkerClient {
       // Event sẽ được forward đến demo HTML handlers
     });
 
-    // Cập nhật trạng thái tab khi visibility thay đổi
-    this.setupTabStateTracking();
   }
 
   /**
@@ -246,6 +222,7 @@ export class SipWorkerClient {
       if (newState !== lastState) {
         lastState = newState;
         
+        // Update tab state
         this.sendMessage({
           type: SipWorker.MessageType.TAB_UPDATE_STATE,
           id: `update-state-${Date.now()}`,
@@ -256,6 +233,14 @@ export class SipWorkerClient {
             lastActiveTime: newState === SipWorker.TabState.ACTIVE ? Date.now() : undefined
           }
         });
+
+        // Request fresh state when tab becomes visible/active (from hidden state)
+        if ((newState === SipWorker.TabState.ACTIVE || newState === SipWorker.TabState.VISIBLE) && 
+            lastState === SipWorker.TabState.HIDDEN) {
+          setTimeout(() => {
+            this.requestStateSync();
+          }, 100); // Small delay to ensure tab state is updated first
+        }
       }
     };
 
@@ -285,11 +270,30 @@ export class SipWorkerClient {
   /**
    * Đăng ký message handler
    */
-  public on(messageType: SipWorker.MessageType, handler: (message: SipWorker.Message) => void): void {
-    if (!this.messageHandlers.has(messageType)) {
-      this.messageHandlers.set(messageType, []);
+  public on(messageType: SipWorker.MessageType | string, handler: (message: SipWorker.Message) => void): void {
+    const eventType = messageType as SipWorker.MessageType;
+    if (!this.messageHandlers.has(eventType)) {
+      this.messageHandlers.set(eventType, []);
     }
-    this.messageHandlers.get(messageType)!.push(handler);
+    this.messageHandlers.get(eventType)!.push(handler);
+  }
+
+  /**
+   * Emit event to registered handlers
+   */
+  private emitEvent(eventType: string, message: SipWorker.Message): void {
+    // Convert string event type to MessageType if needed
+    const messageType = eventType as SipWorker.MessageType;
+    const handlers = this.messageHandlers.get(messageType);
+    if (handlers) {
+      handlers.forEach(handler => {
+        try {
+          handler(message);
+        } catch (error) {
+          console.error('Error in event handler:', error);
+        }
+      });
+    }
   }
 
   /**
@@ -310,15 +314,43 @@ export class SipWorkerClient {
   private handleMessage(message: SipWorker.Message): void {
     console.log('Received message from worker:', message);
 
-    const handlers = this.messageHandlers.get(message.type);
-    if (handlers) {
-      handlers.forEach(handler => {
-        try {
-          handler(message);
-        } catch (error) {
-          console.error('Error in message handler:', error);
-        }
-      });
+    // Handle STATE_SYNC specially to emit to UI handlers with string key
+    if (message.type === SipWorker.MessageType.STATE_SYNC) {
+      // Handle specific handlers (like getCurrentState)
+      const specificHandlers = this.messageHandlers.get(message.type);
+      if (specificHandlers) {
+        specificHandlers.forEach(handler => {
+          try {
+            handler(message);
+          } catch (error) {
+            console.error('Error in specific handler:', error);
+          }
+        });
+      }
+      
+      // Handle UI handlers with string key
+      const uiHandlers = this.messageHandlers.get('state_sync' as SipWorker.MessageType);
+      if (uiHandlers) {
+        uiHandlers.forEach(handler => {
+          try {
+            handler(message);
+          } catch (error) {
+            console.error('Error in UI handler:', error);
+          }
+        });
+      }
+    } else {
+      // Normal message handling for other types
+      const handlers = this.messageHandlers.get(message.type);
+      if (handlers) {
+        handlers.forEach(handler => {
+          try {
+            handler(message);
+          } catch (error) {
+            console.error('Error in message handler:', error);
+          }
+        });
+      }
     }
   }
 
@@ -427,7 +459,8 @@ export class SipWorkerClient {
 
       // Setup response handler
       const stateHandler = (message: SipWorker.Message) => {
-        if (message.id.includes(requestId) || message.type === SipWorker.MessageType.STATE_SYNC) {
+        // CRITICAL FIX: Only respond to messages with matching requestId
+        if (message.id.includes(requestId)) {
           clearTimeout(timeoutId);
           this.off(SipWorker.MessageType.STATE_SYNC, stateHandler);
           resolve(message.data);
@@ -528,30 +561,34 @@ export class SipWorkerClient {
     return this.tabId;
   }
 
-  /**
-   * Handle state sync from worker
-   */
-  private handleStateSync(state: any): void {
-    // Update UI based on synced state
-    if (state.sipRegistration?.registered) {
-      console.log('SIP is registered:', state.sipRegistration);
-    }
-    
-    if (state.activeCalls?.length > 0) {
-      console.log('Active calls:', state.activeCalls);
-      // Update UI for each active call
-      state.activeCalls.forEach((call: any) => {
-        this.updateCallUI(call);
-      });
-    }
-  }
+  // handleStateSync method removed to prevent infinite loops
+  // STATE_SYNC messages are handled by specific handlers only
 
   /**
    * Handle state change from worker
    */
   private handleStateChange(state: any): void {
-    // Similar to handleStateSync but for incremental updates
-    this.handleStateSync(state);
+    console.log('Received state change from worker:', state);
+    
+    // Emit state_sync event for UI to handle (reuse same handler)
+    const handlers = this.messageHandlers.get(SipWorker.MessageType.STATE_SYNC);
+    if (handlers) {
+      const message: SipWorker.Message = {
+        type: SipWorker.MessageType.STATE_SYNC,
+        id: `state-change-${Date.now()}`,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        data: state
+      };
+      
+      handlers.forEach(handler => {
+        try {
+          handler(message);
+        } catch (error) {
+          console.error('Error in state change handler:', error);
+        }
+      });
+    }
   }
 
   /**

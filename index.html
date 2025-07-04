@@ -336,6 +336,7 @@
                 sipClient.on('call_progress', handleCallProgress);
                 sipClient.on('call_terminated', handleCallTerminated);
                 sipClient.on('call_incoming', handleIncomingCall);
+                sipClient.on('state_sync', handleStateSync);
                 sipClient.on('log', handleLog);
                 
                 log('info', 'SipWorkerClient initialized with SharedWorker');
@@ -446,6 +447,73 @@
             const logData = message.data;
             if (logData) {
                 log(logData.level, logData.message);
+            }
+        }
+
+        function handleStateSync(message) {
+            const state = message.data;
+            
+            // Prevent recursive calls
+            if (!state || typeof state !== 'object') {
+                console.warn('Invalid state data received:', state);
+                return;
+            }
+            
+            log('info', 'Received state sync from worker');
+            
+            // Update SIP registration status
+            if (state.sipRegistration) {
+                if (state.sipRegistration.registered) {
+                    updateSipStatus(true);
+                    elements.registerBtn.disabled = true;
+                    elements.unregisterBtn.disabled = false;
+                    elements.makeCallBtn.disabled = false;
+                } else {
+                    updateSipStatus(false);
+                    elements.registerBtn.disabled = false;
+                    elements.unregisterBtn.disabled = true;
+                    elements.makeCallBtn.disabled = true;
+                }
+            }
+            
+            // Update active calls
+            if (state.activeCalls && Array.isArray(state.activeCalls) && state.activeCalls.length > 0) {
+                const activeCall = state.activeCalls[0]; // Get first active call
+                if (activeCall && activeCall.callId) {
+                    currentCallId = activeCall.callId;
+                    updateCallStatus(activeCall.state || 'unknown');
+                    
+                    // Update buttons based on call state
+                    if (activeCall.state === 'established') {
+                        elements.hangUpBtn.disabled = false;
+                        elements.makeCallBtn.disabled = true;
+                    } else if (activeCall.state === 'ringing' && activeCall.direction === 'incoming') {
+                        // Show incoming call UI
+                        elements.incomingCaller.textContent = activeCall.remoteDisplayName || activeCall.remoteUri || 'Unknown';
+                        elements.incomingCallId.textContent = activeCall.id || activeCall.callId;
+                        elements.incomingCall.style.display = 'block';
+                        updateCallStatus('Incoming');
+                    }
+                    
+                    log('info', `Synced active call: ${activeCall.callId} (${activeCall.state})`);
+                }
+            } else {
+                // No active calls
+                updateCallStatus('none');
+                elements.hangUpBtn.disabled = true;
+                elements.incomingCall.style.display = 'none';
+                currentCallId = null;
+                
+                // Enable make call if SIP is registered
+                if (state.sipRegistration?.registered) {
+                    elements.makeCallBtn.disabled = false;
+                }
+            }
+            
+            // Update tab permissions (for debugging)
+            if (state.tabPermissions && Array.isArray(state.tabPermissions) && state.tabPermissions.length > 0) {
+                const permissions = state.tabPermissions.map(p => `${p.tabId || p.id}: ${p.mediaPermission}`).join(', ');
+                log('info', `Tab permissions: ${permissions}`);
             }
         }
 

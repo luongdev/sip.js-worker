@@ -47,6 +47,11 @@ export class MessageBroker {
   private defaultTimeout: number = 30000;
 
   /**
+   * WorkerState để lấy trạng thái hiện tại
+   */
+  private workerState: any;
+
+  /**
    * Khởi tạo MessageBroker
    * @param timeout Thời gian timeout cho các yêu cầu (ms)
    */
@@ -81,6 +86,8 @@ export class MessageBroker {
       id: `worker-ready-${Date.now()}`,
       timestamp: Date.now()
     });
+    
+    // State will be synced via STATE_REQUEST → STATE_SYNC pattern
 
     console.log(`Tab đã đăng ký: ${tabId}`);
   }
@@ -384,5 +391,13 @@ export class MessageBroker {
    */
   public getTabCount(): number {
     return this.ports.size;
+  }
+
+  /**
+   * Set WorkerState reference
+   * @param workerState WorkerState instance
+   */
+  public setWorkerState(workerState: any): void {
+    this.workerState = workerState;
   }
 } 

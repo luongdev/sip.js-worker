@@ -14,8 +14,11 @@ const workerState = new WorkerState();
 // Khởi tạo MessageBroker
 const messageBroker = new MessageBroker();
 
+// Set WorkerState reference cho MessageBroker
+messageBroker.setWorkerState(workerState);
+
 // Khởi tạo TabManager
-const tabManager = new TabManager(messageBroker);
+const tabManager = new TabManager(messageBroker, workerState);
 
 // Biến lưu trữ SipCore
 let sipCore: SipCore | null = null;
@@ -47,14 +50,11 @@ const defaultConfig: SipCoreOptions = {
   autoAcceptCalls: false
 };
 
-// Xử lý kết nối mới từ các tab
 self.addEventListener('connect', (event: any) => {
   const port = event.ports[0];
   
-  // Bắt đầu lắng nghe tin nhắn từ port
   port.start();
   
-  // Xử lý tin nhắn đầu tiên để lấy tabId từ client
   const handleFirstMessage = (messageEvent: MessageEvent) => {
     const message = messageEvent.data;
     
@@ -62,43 +62,22 @@ self.addEventListener('connect', (event: any) => {
     const tabId = message.tabId;
     
     if (tabId) {
-      // Đăng ký port với MessageBroker sử dụng tabId từ client
       messageBroker.registerTab(tabId, port);
       
-      // Xóa listener tạm thời và chuyển sang xử lý bình thường
       port.removeEventListener('message', handleFirstMessage);
       
-      // Thiết lập handler xử lý tin nhắn bình thường
       port.onmessage = (event: MessageEvent) => {
         messageBroker.processMessage(event.data, tabId, port);
       };
       
-      // Xử lý tin nhắn đầu tiên này
       messageBroker.processMessage(message, tabId, port);
     } else {
       console.error('Tin nhắn đầu tiên không có tabId');
     }
   };
   
-  // Thiết lập listener tạm thời cho tin nhắn đầu tiên
   port.addEventListener('message', handleFirstMessage);
 });
-
-// Setup state change listener để broadcast state changes
-workerState.addListener((state) => {
-  messageBroker.broadcast({
-    type: SipWorker.MessageType.STATE_CHANGED,
-    id: `state-changed-${Date.now()}`,
-    timestamp: Date.now(),
-    data: workerState.getSerializableState()
-  });
-});
-
-// Update worker info with connected tabs count
-// TODO: Add event emitter to TabManager
-// tabManager.on('tabCountChanged', (count: number) => {
-//   workerState.setWorkerInfo({ connectedTabs: count });
-// });
 
 // Đăng ký các handler xử lý tin nhắn
 function registerMessageHandlers() {
@@ -142,30 +121,14 @@ function registerMessageHandlers() {
       // Đăng ký SIP
       const result = await sipCore.register();
       
-      // Sync current state to new tab
-      const currentState = workerState.getSerializableState();
-      messageBroker.sendToTab(tabId, {
-        type: SipWorker.MessageType.STATE_SYNC,
-        id: `initial-sync-${Date.now()}`,
-        timestamp: Date.now(),
-        data: currentState
-      });
-      
+      // Note: State sync will be handled by STATE_REQUEST, don't send duplicate
       return result;
     } else {
       // Nếu đã có SipCore, chỉ cần đăng ký lại với thông tin mới
       const credentials = data.sipConfig || {};
       const result = await sipCore.register(credentials);
       
-              // Sync current state to new tab
-        const currentState = workerState.getSerializableState();
-        messageBroker.sendToTab(tabId, {
-          type: SipWorker.MessageType.STATE_SYNC,
-          id: `register-sync-${Date.now()}`,
-          timestamp: Date.now(),
-          data: currentState
-        });
-      
+      // Note: State sync will be handled by STATE_REQUEST, don't send duplicate
       return result;
     }
   });
