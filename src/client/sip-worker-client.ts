@@ -153,10 +153,12 @@ export class SipWorkerClient {
       this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
     });
 
-    this.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message) => {
-      const response = await this.mediaHandler.handleMediaRequest(message.data);
-      this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
-    });
+    // this.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message) => {
+    //   console.log('MEDIA_ICE_CANDIDATE handler - message:', message);
+    //   console.log('MEDIA_ICE_CANDIDATE handler - message.data:', message.data);
+    //   const response = await this.mediaHandler.handleMediaRequest(message.data);
+    //   this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
+    // });
 
     // Xử lý worker ready
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
