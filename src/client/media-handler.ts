@@ -170,15 +170,30 @@ export class MediaHandler {
   private async createAnswerDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
     const { sessionId, constraints } = request;
 
-    const sessionState = this.sessions.get(sessionId);
+    let sessionState = this.sessions.get(sessionId);
     if (!sessionState) {
-      throw new Error(`No session found for sessionId: ${sessionId}`);
+      // For incoming calls, session might not exist yet - create it
+      console.log('Creating new session for answer request:', sessionId);
+      sessionState = await this.createSession(sessionId);
     }
 
-    // Ensure we have remote description set first
+    // Check if we have remote description, if not wait a bit
     if (!sessionState.remoteDescription) {
-      throw new Error('Cannot create answer without remote description');
+      console.log('No remote description yet, waiting for setRemoteDescription...');
+      
+      // Wait up to 5 seconds for remote description to be set
+      let retries = 10;
+      while (retries > 0 && !sessionState.remoteDescription) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        retries--;
+      }
+      
+      if (!sessionState.remoteDescription) {
+        throw new Error('Cannot create answer without remote description - timeout waiting for remote SDP');
+      }
     }
+
+    console.log('Creating answer for session:', sessionId, 'signaling state:', sessionState.peerConnection.signalingState);
 
     // Get local media stream
     await this.getLocalMediaStream(sessionState, constraints);

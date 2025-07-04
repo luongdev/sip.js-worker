@@ -173,6 +173,27 @@ export class SipWorkerClient {
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
       console.log('Connected to worker');
+      
+      // Auto request state sync when connected
+      setTimeout(() => {
+        this.requestStateSync();
+        // Also detect and update media permission
+        this.detectAndUpdateMediaPermission();
+      }, 100); // Small delay to ensure worker is fully ready
+    });
+
+    // Xử lý state sync từ worker
+    this.on(SipWorker.MessageType.STATE_SYNC, (message) => {
+      console.log('Received state sync from worker:', message.data);
+      // Forward state to any listeners
+      this.handleStateSync(message.data);
+    });
+
+    // Xử lý state changed từ worker
+    this.on(SipWorker.MessageType.STATE_CHANGED, (message) => {
+      console.log('Worker state changed:', message.data);
+      // Forward state change to any listeners
+      this.handleStateChange(message.data);
     });
 
     // Xử lý call terminated để reset UI
@@ -379,6 +400,66 @@ export class SipWorkerClient {
   }
 
   /**
+   * Yêu cầu đồng bộ trạng thái hiện tại từ worker
+   */
+  public requestStateSync(): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.STATE_REQUEST,
+      id: `state-request-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Lấy trạng thái hiện tại (Promise-based)
+   */
+  public async getCurrentState(timeout: number = 5000): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const requestId = `state-request-${Date.now()}`;
+      let timeoutId: number;
+
+      // Setup timeout
+      timeoutId = setTimeout(() => {
+        this.off(SipWorker.MessageType.STATE_SYNC, stateHandler);
+        reject(new Error('State request timeout'));
+      }, timeout) as any;
+
+      // Setup response handler
+      const stateHandler = (message: SipWorker.Message) => {
+        if (message.id.includes(requestId) || message.type === SipWorker.MessageType.STATE_SYNC) {
+          clearTimeout(timeoutId);
+          this.off(SipWorker.MessageType.STATE_SYNC, stateHandler);
+          resolve(message.data);
+        }
+      };
+
+      this.on(SipWorker.MessageType.STATE_SYNC, stateHandler);
+
+      // Send request
+      this.sendMessage({
+        type: SipWorker.MessageType.STATE_REQUEST,
+        id: requestId,
+        tabId: this.tabId,
+        timestamp: Date.now()
+      });
+    });
+  }
+
+  /**
+   * Bỏ đăng ký message handler
+   */
+  public off(messageType: SipWorker.MessageType, handler: (message: SipWorker.Message) => void): void {
+    const handlers = this.messageHandlers.get(messageType);
+    if (handlers) {
+      const index = handlers.indexOf(handler);
+      if (index > -1) {
+        handlers.splice(index, 1);
+      }
+    }
+  }
+
+  /**
    * Cập nhật quyền media
    */
   public updateMediaPermission(permission: SipWorker.TabMediaPermission): void {
@@ -389,6 +470,34 @@ export class SipWorkerClient {
       timestamp: Date.now(),
       data: { mediaPermission: permission }
     });
+  }
+
+  /**
+   * Auto detect và update media permission
+   */
+  private async detectAndUpdateMediaPermission(): Promise<void> {
+    try {
+      // Try to get user media to detect permission
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // If successful, permission is granted
+      this.updateMediaPermission(SipWorker.TabMediaPermission.GRANTED);
+      
+      // Stop the stream immediately
+      stream.getTracks().forEach(track => track.stop());
+      
+    } catch (error: any) {
+      // Check error type to determine permission status
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        this.updateMediaPermission(SipWorker.TabMediaPermission.DENIED);
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        // No microphone found, but permission might be granted
+        this.updateMediaPermission(SipWorker.TabMediaPermission.GRANTED);
+      } else {
+        // Other errors, assume not requested yet
+        this.updateMediaPermission(SipWorker.TabMediaPermission.NOT_REQUESTED);
+      }
+    }
   }
 
   /**
@@ -417,5 +526,48 @@ export class SipWorkerClient {
    */
   public getTabId(): string {
     return this.tabId;
+  }
+
+  /**
+   * Handle state sync from worker
+   */
+  private handleStateSync(state: any): void {
+    // Update UI based on synced state
+    if (state.sipRegistration?.registered) {
+      console.log('SIP is registered:', state.sipRegistration);
+    }
+    
+    if (state.activeCalls?.length > 0) {
+      console.log('Active calls:', state.activeCalls);
+      // Update UI for each active call
+      state.activeCalls.forEach((call: any) => {
+        this.updateCallUI(call);
+      });
+    }
+  }
+
+  /**
+   * Handle state change from worker
+   */
+  private handleStateChange(state: any): void {
+    // Similar to handleStateSync but for incremental updates
+    this.handleStateSync(state);
+  }
+
+  /**
+   * Update UI for a specific call
+   */
+  private updateCallUI(call: any): void {
+    // This will be implemented based on your UI framework
+    console.log('Updating UI for call:', call);
+    
+    // Example: trigger events for UI components to handle
+    if (call.state === 'ringing' && call.direction === 'incoming') {
+      // Show incoming call UI
+      console.log('Show incoming call UI for:', call.id);
+    } else if (call.state === 'established') {
+      // Show established call UI
+      console.log('Show established call UI for:', call.id);
+    }
   }
 } 

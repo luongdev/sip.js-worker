@@ -107,25 +107,55 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     };
 
     try {
-      const response = await this.messageBroker.request(selectedTab.id, request, 10000);
+      // Increase timeout for answer requests (they might need more time)
+      const timeout = requestType === 'answer' ? 15000 : 10000;
+      
+      this.logger.debug(`Requesting ${requestType} from tab ${selectedTab.id} with ${timeout}ms timeout`);
+      
+      const response = await this.messageBroker.request(selectedTab.id, request, timeout);
       
       if (response.error) {
-        throw new Error(`Failed to get offer: ${response.error.message}`);
+        throw new Error(`Failed to get ${requestType}: ${response.error.message}`);
       }
 
       const sdp = response.data?.sdp;
       if (!sdp) {
-        throw new Error('No SDP received from tab');
+        throw new Error(`No SDP received from tab for ${requestType}`);
       }
 
-      this.logger.debug(`Received SDP offer from tab: ${sdp.substring(0, 100)}...`);
+      this.logger.debug(`Received SDP ${requestType} from tab: ${sdp.substring(0, 100)}...`);
 
       return {
         body: sdp,
         contentType: 'application/sdp'
       };
     } catch (error) {
-      this.logger.error(`Failed to get description: ${error}`);
+      this.logger.error(`Failed to get ${requestType} description: ${error}`);
+      
+      // Try to select a different tab if current one fails
+      if (this.selectedTabId) {
+        this.logger.warn(`Tab ${this.selectedTabId} failed, trying to select different tab`);
+        this.selectedTabId = undefined; // Reset selected tab
+        
+        // Try once more with a different tab
+        const fallbackTab = await this.tabManager.getSelectedTab();
+        if (fallbackTab && fallbackTab.id !== selectedTab.id) {
+          this.logger.debug(`Retrying ${requestType} request with fallback tab: ${fallbackTab.id}`);
+          this.selectedTabId = fallbackTab.id;
+          
+          const fallbackRequest = { ...request, id: `fallback-${request.id}` };
+          const fallbackResponse = await this.messageBroker.request(fallbackTab.id, fallbackRequest, 10000);
+          
+          if (fallbackResponse.data?.sdp) {
+            this.logger.debug(`Fallback tab succeeded for ${requestType}`);
+            return {
+              body: fallbackResponse.data.sdp,
+              contentType: 'application/sdp'
+            };
+          }
+        }
+      }
+      
       throw error;
     }
   }

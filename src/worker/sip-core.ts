@@ -152,11 +152,13 @@ export class SipCore {
    * @param messageBroker MessageBroker để giao tiếp với các tab
    * @param tabManager TabManager để quản lý các tab
    * @param options Tùy chọn khởi tạo
+   * @param workerState WorkerState để quản lý trạng thái
    */
   constructor(
     messageBroker: MessageBroker,
     tabManager: TabManager,
-    options: SipCoreOptions
+    options: SipCoreOptions,
+    private workerState?: any // Import sau
   ) {
     this.messageBroker = messageBroker;
     this.tabManager = tabManager;
@@ -435,6 +437,11 @@ export class SipCore {
     // Thiết lập event listeners cho invitation
     this.setupInvitationListeners(invitation, callInfo);
     
+    // Update WorkerState với incoming call
+    if (this.workerState) {
+      this.workerState.setActiveCall(callId, callInfo);
+    }
+
     // Broadcast thông báo cuộc gọi đến
     this.messageBroker.broadcast({
       type: SipWorker.MessageType.CALL_INCOMING,
@@ -541,6 +548,11 @@ export class SipCore {
 
       // Lưu cuộc gọi vào danh sách
       this.activeCalls.set(callId, inviter);
+
+      // Update WorkerState với outgoing call
+      if (this.workerState) {
+        this.workerState.setActiveCall(callId, callInfo);
+      }
 
       // Thiết lập event listeners cho inviter
       this.setupInviterListeners(inviter, callInfo);
@@ -936,12 +948,116 @@ export class SipCore {
    * @param callInfo Thông tin cuộc gọi
    */
   private broadcastCallStatus(callInfo: SipWorker.CallInfo): void {
+    // Update WorkerState
+    if (this.workerState) {
+      if (callInfo.state === SipWorker.CallState.TERMINATED) {
+        this.workerState.removeActiveCall(callInfo.id);
+      } else {
+        this.workerState.setActiveCall(callInfo.id, callInfo);
+      }
+    }
+
     this.messageBroker.broadcast({
       type: SipWorker.MessageType.CALL_PROGRESS,
       id: `call-progress-${Date.now()}`,
       timestamp: Date.now(),
       data: callInfo
     });
+  }
+
+  /**
+   * Sync current call state to a specific tab (for new tabs)
+   * @param tabId ID của tab cần sync
+   */
+  public syncCallStateToTab(tabId: string): void {
+    // Send current registration state
+    if (this.registered) {
+      this.messageBroker.sendToTab(tabId, {
+        type: SipWorker.MessageType.SIP_REGISTERED,
+        id: `sync-registration-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          uri: this.sipConfig.uri,
+          username: this.sipConfig.username,
+          displayName: this.sipConfig.displayName
+        }
+      });
+    }
+
+    // Send current active calls
+    this.activeCalls.forEach((session, callId) => {
+      const callInfo = this.getCallInfoFromSession(session, callId);
+      if (callInfo) {
+        // Send call progress for ongoing calls
+        this.messageBroker.sendToTab(tabId, {
+          type: SipWorker.MessageType.CALL_PROGRESS,
+          id: `sync-call-${Date.now()}`,
+          timestamp: Date.now(),
+          data: callInfo
+        });
+
+        // Send specific call state messages based on current state
+        if (callInfo.state === SipWorker.CallState.RINGING && callInfo.direction === SipWorker.CallDirection.INCOMING) {
+          // Send incoming call notification for ringing incoming calls
+          this.messageBroker.sendToTab(tabId, {
+            type: SipWorker.MessageType.CALL_INCOMING,
+            id: `sync-incoming-${Date.now()}`,
+            timestamp: Date.now(),
+            data: callInfo
+          });
+        }
+      }
+    });
+  }
+
+  /**
+   * Extract call info from session for sync purposes
+   * @param session SIP session
+   * @param callId Call ID
+   * @returns Call info or null
+   */
+  private getCallInfoFromSession(session: Session, callId: string): SipWorker.CallInfo | null {
+    try {
+      const isOutgoing = session instanceof Inviter;
+      const remoteUri = isOutgoing ? 
+        (session as Inviter).remoteIdentity.uri.toString() : 
+        (session as Invitation).remoteIdentity.uri.toString();
+      
+      const remoteDisplayName = isOutgoing ? 
+        (session as Inviter).remoteIdentity.displayName : 
+        (session as Invitation).remoteIdentity.displayName;
+
+      // Map session state to call state
+      let callState: SipWorker.CallState;
+      switch (session.state) {
+        case SessionState.Initial:
+          callState = SipWorker.CallState.CONNECTING;
+          break;
+        case SessionState.Establishing:
+          callState = isOutgoing ? SipWorker.CallState.RINGING : SipWorker.CallState.RINGING;
+          break;
+        case SessionState.Established:
+          callState = SipWorker.CallState.ESTABLISHED;
+          break;
+        case SessionState.Terminated:
+          callState = SipWorker.CallState.TERMINATED;
+          break;
+        default:
+          callState = SipWorker.CallState.CONNECTING;
+      }
+
+      return {
+        id: callId,
+        direction: isOutgoing ? SipWorker.CallDirection.OUTGOING : SipWorker.CallDirection.INCOMING,
+        state: callState,
+        remoteUri,
+        remoteDisplayName,
+        startTime: Date.now() // Approximation, real start time would need to be tracked
+      };
+    } catch (error) {
+      console.error('Failed to extract call info from session:', error);
+      return null;
+    }
   }
 
   /**
@@ -1076,6 +1192,16 @@ export class SipCore {
    * @param registered Đã đăng ký thành công hay không
    */
   private broadcastRegistrationState(registered: boolean): void {
+    // Update WorkerState
+    if (this.workerState) {
+      this.workerState.setSipRegistration({
+        registered,
+        uri: this.sipConfig.uri,
+        username: this.sipConfig.username,
+        displayName: this.sipConfig.displayName
+      });
+    }
+
     this.messageBroker.broadcast({
       type: registered ? SipWorker.MessageType.SIP_REGISTERED : SipWorker.MessageType.SIP_UNREGISTERED,
       id: `sip-registration-${Date.now()}`,

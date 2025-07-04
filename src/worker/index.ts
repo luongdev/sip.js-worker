@@ -5,7 +5,11 @@
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
 import { SipCore, SipCoreOptions } from './sip-core';
+import { WorkerState } from './worker-state';
 import { SipWorker, VERSION } from '../common/types';
+
+// Khởi tạo WorkerState
+const workerState = new WorkerState();
 
 // Khởi tạo MessageBroker
 const messageBroker = new MessageBroker();
@@ -80,8 +84,38 @@ self.addEventListener('connect', (event: any) => {
   port.addEventListener('message', handleFirstMessage);
 });
 
+// Setup state change listener để broadcast state changes
+workerState.addListener((state) => {
+  messageBroker.broadcast({
+    type: SipWorker.MessageType.STATE_CHANGED,
+    id: `state-changed-${Date.now()}`,
+    timestamp: Date.now(),
+    data: workerState.getSerializableState()
+  });
+});
+
+// Update worker info with connected tabs count
+// TODO: Add event emitter to TabManager
+// tabManager.on('tabCountChanged', (count: number) => {
+//   workerState.setWorkerInfo({ connectedTabs: count });
+// });
+
 // Đăng ký các handler xử lý tin nhắn
 function registerMessageHandlers() {
+  // Handler cho STATE_REQUEST - tab yêu cầu đồng bộ trạng thái
+  messageBroker.on(SipWorker.MessageType.STATE_REQUEST, async (message, tabId, port) => {
+    // Gửi trạng thái hiện tại về tab yêu cầu
+    const currentState = workerState.getSerializableState();
+    
+    messageBroker.sendToTab(tabId, {
+      type: SipWorker.MessageType.STATE_SYNC,
+      id: `state-sync-${Date.now()}`,
+      timestamp: Date.now(),
+      data: currentState
+    });
+    
+    return { success: true, message: 'State synced' };
+  });
   // Handler cho tin nhắn SIP_REGISTER
   messageBroker.on(SipWorker.MessageType.SIP_REGISTER, async (message, tabId, port) => {
     const data = message.data || {};
@@ -103,14 +137,36 @@ function registerMessageHandlers() {
         autoAcceptCalls: defaultConfig.autoAcceptCalls
       };
       
-      sipCore = new SipCore(messageBroker, tabManager, options);
+      sipCore = new SipCore(messageBroker, tabManager, options, workerState);
       
       // Đăng ký SIP
-      return await sipCore.register();
+      const result = await sipCore.register();
+      
+      // Sync current state to new tab
+      const currentState = workerState.getSerializableState();
+      messageBroker.sendToTab(tabId, {
+        type: SipWorker.MessageType.STATE_SYNC,
+        id: `initial-sync-${Date.now()}`,
+        timestamp: Date.now(),
+        data: currentState
+      });
+      
+      return result;
     } else {
       // Nếu đã có SipCore, chỉ cần đăng ký lại với thông tin mới
       const credentials = data.sipConfig || {};
-      return await sipCore.register(credentials);
+      const result = await sipCore.register(credentials);
+      
+              // Sync current state to new tab
+        const currentState = workerState.getSerializableState();
+        messageBroker.sendToTab(tabId, {
+          type: SipWorker.MessageType.STATE_SYNC,
+          id: `register-sync-${Date.now()}`,
+          timestamp: Date.now(),
+          data: currentState
+        });
+      
+      return result;
     }
   });
   
@@ -203,6 +259,18 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
   
+  // Handler cho cập nhật media permission
+  messageBroker.on(SipWorker.MessageType.TAB_UPDATE_STATE, async (message, tabId, port) => {
+    const data = message.data;
+    
+    // Update media permission in WorkerState if provided
+    if (data && data.mediaPermission) {
+      workerState.setTabPermission(tabId, data.mediaPermission);
+    }
+    
+    return { success: true };
+  });
+
   // Handler cho tin nhắn PING
   messageBroker.on(SipWorker.MessageType.PING, async (message, tabId, port) => {
     return {

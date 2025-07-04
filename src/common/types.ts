@@ -56,6 +56,11 @@ export namespace SipWorker {
     MEDIA_SESSION_READY = 'media_session_ready',   // Tab báo session đã sẵn sàng
     MEDIA_SESSION_FAILED = 'media_session_failed', // Tab báo session thất bại
 
+    // State Sync
+    STATE_REQUEST = 'state_request',         // Tab yêu cầu đồng bộ trạng thái
+    STATE_SYNC = 'state_sync',               // Worker gửi trạng thái hiện tại
+    STATE_CHANGED = 'state_changed',         // Worker thông báo trạng thái đã thay đổi
+
     // Tin nhắn hệ thống
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
