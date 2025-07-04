@@ -239,6 +239,121 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho CALL_MUTE
+  messageBroker.on(SipWorker.MessageType.CALL_MUTE, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.CallControlRequest;
+      const result = await sipCore.muteCall(request.callId);
+      
+      messageBroker.sendToTab(tabId, {
+        type: result.success ? SipWorker.MessageType.CALL_MUTED : SipWorker.MessageType.CALL_TRANSFER_FAILED,
+        id: `mute-response-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          callId: request.callId,
+          success: result.success,
+          action: 'mute',
+          error: result.error
+        } as SipWorker.CallControlResponse
+      });
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho CALL_UNMUTE
+  messageBroker.on(SipWorker.MessageType.CALL_UNMUTE, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.CallControlRequest;
+      const result = await sipCore.unmuteCall(request.callId);
+      
+      messageBroker.sendToTab(tabId, {
+        type: result.success ? SipWorker.MessageType.CALL_UNMUTED : SipWorker.MessageType.CALL_TRANSFER_FAILED,
+        id: `unmute-response-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          callId: request.callId,
+          success: result.success,
+          action: 'unmute',
+          error: result.error
+        } as SipWorker.CallControlResponse
+      });
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho CALL_HOLD
+  messageBroker.on(SipWorker.MessageType.CALL_HOLD, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.CallControlRequest;
+      const result = await sipCore.holdCall(request.callId);
+      
+      messageBroker.sendToTab(tabId, {
+        type: result.success ? SipWorker.MessageType.CALL_HELD : SipWorker.MessageType.CALL_TRANSFER_FAILED,
+        id: `hold-response-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          callId: request.callId,
+          success: result.success,
+          action: 'hold',
+          error: result.error
+        } as SipWorker.CallControlResponse
+      });
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho CALL_UNHOLD
+  messageBroker.on(SipWorker.MessageType.CALL_UNHOLD, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.CallControlRequest;
+      const result = await sipCore.unholdCall(request.callId);
+      
+      messageBroker.sendToTab(tabId, {
+        type: result.success ? SipWorker.MessageType.CALL_UNHELD : SipWorker.MessageType.CALL_TRANSFER_FAILED,
+        id: `unhold-response-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          callId: request.callId,
+          success: result.success,
+          action: 'unhold',
+          error: result.error
+        } as SipWorker.CallControlResponse
+      });
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho CALL_TRANSFER
+  messageBroker.on(SipWorker.MessageType.CALL_TRANSFER, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as SipWorker.CallTransferRequest;
+      const result = await sipCore.transferCall(request.callId, request.targetUri, request.extraHeaders);
+      
+      messageBroker.sendToTab(tabId, {
+        type: result.success ? SipWorker.MessageType.CALL_TRANSFERRED : SipWorker.MessageType.CALL_TRANSFER_FAILED,
+        id: `transfer-response-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          callId: request.callId,
+          success: result.success,
+          action: 'transfer',
+          error: result.error
+        } as SipWorker.CallControlResponse
+      });
+      
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho session ready từ tab  
   messageBroker.on(SipWorker.MessageType.MEDIA_SESSION_READY, async (message, tabId, port) => {
     console.log('Worker received session ready from tab:', tabId, message.data);
@@ -263,6 +378,46 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
   
+  // Handler cho CALL_MUTED response từ client
+  messageBroker.on(SipWorker.MessageType.CALL_MUTED, async (message, tabId, port) => {
+    console.log('Worker received CALL_MUTED response from tab:', tabId, message.data);
+    
+    const response = message.data as SipWorker.CallControlResponse;
+    if (response && response.success) {
+      console.log(`Call ${response.callId} muted successfully in tab ${tabId}`);
+      
+      // Broadcast muted status to all tabs for UI sync
+      messageBroker.broadcast({
+        type: SipWorker.MessageType.CALL_MUTED,
+        id: `mute-broadcast-${Date.now()}`,
+        timestamp: Date.now(),
+        data: response
+      });
+    }
+    
+    return { success: true };
+  });
+
+  // Handler cho CALL_UNMUTED response từ client
+  messageBroker.on(SipWorker.MessageType.CALL_UNMUTED, async (message, tabId, port) => {
+    console.log('Worker received CALL_UNMUTED response from tab:', tabId, message.data);
+    
+    const response = message.data as SipWorker.CallControlResponse;
+    if (response && response.success) {
+      console.log(`Call ${response.callId} unmuted successfully in tab ${tabId}`);
+      
+      // Broadcast unmuted status to all tabs for UI sync
+      messageBroker.broadcast({
+        type: SipWorker.MessageType.CALL_UNMUTED,
+        id: `unmute-broadcast-${Date.now()}`,
+        timestamp: Date.now(),
+        data: response
+      });
+    }
+    
+    return { success: true };
+  });
+
   // Handler cho cập nhật media permission
   messageBroker.on(SipWorker.MessageType.TAB_UPDATE_STATE, async (message, tabId, port) => {
     const data = message.data;

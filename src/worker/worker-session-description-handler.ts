@@ -31,7 +31,12 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     this.tabManager = tabManager;
     this.sessionId = sessionId;
     this.isEarlyMedia = isEarlyMedia;
+    
+    // Log the sessionId for debugging
+    this.logger.debug(`WorkerSessionDescriptionHandler created with sessionId: ${this.sessionId}`);
   }
+
+
 
   /**
    * Close this handler and cleanup resources
@@ -49,6 +54,10 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     modifiers?: Array<SessionDescriptionHandlerModifier>
   ): Promise<BodyAndContentType> {
     this.logger.debug('WorkerSessionDescriptionHandler.getDescription');
+    
+    // TODO: Implement serialization and handling of SessionDescriptionHandlerOptions and SessionDescriptionHandlerModifiers
+    // Need to serialize options/modifiers and send them to tab for proper SDP manipulation
+    // Currently ignoring options and modifiers for simplicity
     
     if (this.isClosed) {
       throw new Error('SessionDescriptionHandler is closed');
@@ -320,7 +329,13 @@ export function createWorkerSessionDescriptionHandlerFactory(
       } as Logger;
     }
     
-    const sessionId = session.id || `session-${Date.now()}`;
+    // Use callId from sessionDescriptionHandlerOptions if available (our hack)
+    const callId = (session.sessionDescriptionHandlerOptions as any)?.callId;
+    const sessionId = callId || session.id || `session-${Date.now()}`;
+    
+    console.log('WorkerSDH: callId from options:', callId);
+    console.log('WorkerSDH: session.id:', session.id);
+    console.log('WorkerSDH: final sessionId:', sessionId);
     
     // Check if this is for early media (based on session type or options)
     const isEarlyMedia = options?.isEarlyMedia || false;

@@ -93,6 +93,8 @@ export class MediaHandler {
     this.callbacks = callbacks;
   }
 
+
+
   /**
    * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
@@ -169,6 +171,115 @@ export class MediaHandler {
         tones: request.tones,
         error: error.message || 'Unknown DTMF error'
       };
+    }
+  }
+
+  /**
+   * Mute audio tracks for a session (now callId = sessionId thanks to our hack)
+   */
+  public async muteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Muting audio for call/session:', callId);
+    console.log('Available sessions:', Array.from(this.sessions.keys()));
+
+    try {
+      // Now callId should be the same as sessionId thanks to our hack
+      const sessionState = this.sessions.get(callId);
+      if (!sessionState || !sessionState.localStream) {
+        console.error('Session not found for callId:', callId);
+        console.error('Available sessions:', Array.from(this.sessions.keys()));
+        throw new Error('Session or local stream not found');
+      }
+
+      // Disable all audio tracks
+      sessionState.localStream.getAudioTracks().forEach(track => {
+        track.enabled = false;
+        console.log('Audio track muted:', track.id);
+      });
+
+      console.log('Audio muted successfully for call/session:', callId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to mute audio:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unmute audio tracks for a session (now callId = sessionId thanks to our hack)
+   */
+  public async unmuteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Unmuting audio for call/session:', callId);
+
+    try {
+      // Now callId should be the same as sessionId thanks to our hack
+      const sessionState = this.sessions.get(callId);
+      if (!sessionState || !sessionState.localStream) {
+        throw new Error('Session or local stream not found');
+      }
+
+      // Enable all audio tracks
+      sessionState.localStream.getAudioTracks().forEach(track => {
+        track.enabled = true;
+        console.log('Audio track unmuted:', track.id);
+      });
+
+      console.log('Audio unmuted successfully for call/session:', callId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to unmute audio:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Mute video tracks for a session
+   */
+  public async muteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Muting video for session:', sessionId);
+
+    try {
+      const sessionState = this.sessions.get(sessionId);
+      if (!sessionState || !sessionState.localStream) {
+        throw new Error('Session or local stream not found');
+      }
+
+      // Disable all video tracks
+      sessionState.localStream.getVideoTracks().forEach(track => {
+        track.enabled = false;
+        console.log('Video track muted:', track.id);
+      });
+
+      console.log('Video muted successfully for session:', sessionId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to mute video:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unmute video tracks for a session
+   */
+  public async unmuteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Unmuting video for session:', sessionId);
+
+    try {
+      const sessionState = this.sessions.get(sessionId);
+      if (!sessionState || !sessionState.localStream) {
+        throw new Error('Session or local stream not found');
+      }
+
+      // Enable all video tracks
+      sessionState.localStream.getVideoTracks().forEach(track => {
+        track.enabled = true;
+        console.log('Video track unmuted:', track.id);
+      });
+
+      console.log('Video unmuted successfully for session:', sessionId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to unmute video:', error);
+      return { success: false, error: error.message };
     }
   }
 

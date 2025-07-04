@@ -179,6 +179,118 @@ export class SipWorkerClient {
       });
     });
 
+    // Xử lý call control requests từ worker
+    this.on(SipWorker.MessageType.CALL_MUTE, async (message) => {
+      console.log('Client received CALL_MUTE message:', message);
+      console.log('Message data:', message.data);
+      console.log('Message data type:', typeof message.data);
+      console.log('Message data keys:', Object.keys(message.data || {}));
+      
+      // Check if this is a broadcast message (has callId and action) vs response message (has success)
+      if (message.data && typeof message.data === 'object' && 'success' in message.data) {
+        console.log('This is a CALL_MUTE response message, ignoring...');
+        return;
+      }
+      
+      // Fix: Extract callId correctly from message structure
+      const callId = message.data?.callId;
+      console.log('Extracted callId:', callId);
+      if (!callId) {
+        console.error('No callId found in CALL_MUTE message');
+        console.error('Full message:', JSON.stringify(message, null, 2));
+        return;
+      }
+      const result = await this.mediaHandler.muteAudio(callId);
+      
+      // Gửi response về worker
+      this.sendMessage({
+        type: SipWorker.MessageType.CALL_MUTED,
+        id: `mute-response-${message.id}`,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        data: {
+          callId,
+          success: result.success,
+          action: 'mute',
+          error: result.error
+        }
+      });
+    });
+
+    this.on(SipWorker.MessageType.CALL_UNMUTE, async (message) => {
+      console.log('Client received CALL_UNMUTE message:', message);
+      console.log('Message data:', message.data);
+      console.log('Message data type:', typeof message.data);
+      console.log('Message data keys:', Object.keys(message.data || {}));
+      
+      // Check if this is a broadcast message (has callId and action) vs response message (has success)
+      if (message.data && typeof message.data === 'object' && 'success' in message.data) {
+        console.log('This is a CALL_UNMUTE response message, ignoring...');
+        return;
+      }
+      
+      // Fix: Extract callId correctly from message structure
+      const callId = message.data?.callId;
+      console.log('Extracted callId:', callId);
+      if (!callId) {
+        console.error('No callId found in CALL_UNMUTE message');
+        console.error('Full message:', JSON.stringify(message, null, 2));
+        return;
+      }
+      const result = await this.mediaHandler.unmuteAudio(callId);
+      
+      // Gửi response về worker
+      this.sendMessage({
+        type: SipWorker.MessageType.CALL_UNMUTED,
+        id: `unmute-response-${message.id}`,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        data: {
+          callId,
+          success: result.success,
+          action: 'unmute',
+          error: result.error
+        }
+      });
+    });
+
+    // Xử lý call control responses
+    this.on(SipWorker.MessageType.CALL_MUTED, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call muted:', response);
+      
+      // This is a response/broadcast message, not a request - do not process as mute request
+      // Just log for UI sync
+    });
+
+    this.on(SipWorker.MessageType.CALL_UNMUTED, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call unmuted:', response);
+      
+      // This is a response/broadcast message, not a request - do not process as unmute request
+      // Just log for UI sync
+    });
+
+    this.on(SipWorker.MessageType.CALL_HELD, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call held:', response);
+    });
+
+    this.on(SipWorker.MessageType.CALL_UNHELD, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call unheld:', response);
+    });
+
+    this.on(SipWorker.MessageType.CALL_TRANSFERRED, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call transferred:', response);
+    });
+
+    this.on(SipWorker.MessageType.CALL_TRANSFER_FAILED, (message) => {
+      const response = message.data as SipWorker.CallControlResponse;
+      console.log('Call transfer failed:', response);
+    });
+
     // Xử lý worker ready
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
@@ -191,7 +303,7 @@ export class SipWorkerClient {
       }, 100); // Small delay to ensure worker is fully ready
     });
 
-    // Xử lý call terminated để reset UI
+    // Xử lý call terminated để reset UI và cleanup session
     this.on(SipWorker.MessageType.CALL_TERMINATED, (message) => {
       const callData = message.data;
       let terminationInfo = 'Call terminated';
@@ -206,6 +318,13 @@ export class SipWorkerClient {
       }
       
       console.log(terminationInfo, callData);
+      
+      // Fix: Cleanup session in MediaHandler when call terminates
+      if (callData.id) {
+        console.log(`Cleaning up session for terminated call: ${callData.id}`);
+        this.mediaHandler.cleanupSession(callData.id);
+      }
+      
       // Event sẽ được forward đến demo HTML handlers
     });
 
@@ -463,6 +582,88 @@ export class SipWorkerClient {
         duration,
         interToneGap
       } as SipWorker.DtmfRequest
+    });
+  }
+
+  /**
+   * Tắt tiếng cuộc gọi
+   */
+  public muteCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_MUTE,
+      id: `mute-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        action: 'mute'
+      } as SipWorker.CallControlRequest
+    });
+  }
+
+  /**
+   * Bật tiếng cuộc gọi
+   */
+  public unmuteCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_UNMUTE,
+      id: `unmute-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        action: 'unmute'
+      } as SipWorker.CallControlRequest
+    });
+  }
+
+  /**
+   * Giữ cuộc gọi
+   */
+  public holdCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_HOLD,
+      id: `hold-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        action: 'hold'
+      } as SipWorker.CallControlRequest
+    });
+  }
+
+  /**
+   * Bỏ giữ cuộc gọi
+   */
+  public unholdCall(callId: string): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_UNHOLD,
+      id: `unhold-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        action: 'unhold'
+      } as SipWorker.CallControlRequest
+    });
+  }
+
+  /**
+   * Chuyển cuộc gọi
+   */
+  public transferCall(callId: string, targetUri: string, type: 'blind' | 'attended' = 'blind', extraHeaders?: Record<string, string>): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.CALL_TRANSFER,
+      id: `transfer-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        callId,
+        targetUri,
+        type,
+        extraHeaders
+      } as SipWorker.CallTransferRequest
     });
   }
 
