@@ -185,9 +185,10 @@ export class MediaHandler {
       // Now callId should be the same as sessionId thanks to our hack
       const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
-        console.error('Session not found for callId:', callId);
-        console.error('Available sessions:', Array.from(this.sessions.keys()));
-        throw new Error('Session or local stream not found');
+        // This tab doesn't have this session - this is normal when forwarding to specific tab
+        console.log('Session not found for callId:', callId, '- this tab does not own this session');
+        console.log('Available sessions:', Array.from(this.sessions.keys()));
+        return { success: false, error: 'Session not found in this tab' };
       }
 
       // Disable all audio tracks
@@ -214,7 +215,10 @@ export class MediaHandler {
       // Now callId should be the same as sessionId thanks to our hack
       const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
-        throw new Error('Session or local stream not found');
+        // This tab doesn't have this session - this is normal when forwarding to specific tab
+        console.log('Session not found for callId:', callId, '- this tab does not own this session');
+        console.log('Available sessions:', Array.from(this.sessions.keys()));
+        return { success: false, error: 'Session not found in this tab' };
       }
 
       // Enable all audio tracks

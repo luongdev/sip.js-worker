@@ -714,6 +714,10 @@
                         elements.makeCallBtn.disabled = true;
                         elements.dtmfSend.disabled = false;
                         updateDtmfButtons(false);
+                        updateCallControlButtons(false);
+                        
+                        // Update button states based on mute/hold status from synced data
+                        updateCallControlButtonStates(activeCall.isMuted || false, activeCall.isOnHold || false);
                     } else if (activeCall.state === 'ringing' && activeCall.direction === 'incoming') {
                         // Show incoming call UI
                         elements.incomingCaller.textContent = activeCall.remoteDisplayName || activeCall.remoteUri || 'Unknown';
@@ -730,6 +734,7 @@
                 elements.hangUpBtn.disabled = true;
                 elements.dtmfSend.disabled = true;
                 updateDtmfButtons(true);
+                updateCallControlButtons(true);
                 elements.incomingCall.style.display = 'none';
                 currentCallId = null;
                 

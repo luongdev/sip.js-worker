@@ -658,7 +658,7 @@ export namespace SipWorker {
     endTime?: number;
 
     /**
-     * ID của tab đang xử lý cuộc gọi
+     * ID của tab đang xử lý cuộc gọi (owns the media session)
      */
     handlingTabId?: string;
 

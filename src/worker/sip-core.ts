@@ -339,7 +339,8 @@ export class SipCore {
       // Tạo WorkerSessionDescriptionHandlerFactory
       const sessionDescriptionHandlerFactory = createWorkerSessionDescriptionHandlerFactory(
         this.messageBroker,
-        this.tabManager
+        this.tabManager,
+        this.workerState
       );
 
       // Tạo cấu hình UserAgent
@@ -431,6 +432,7 @@ export class SipCore {
       startTime: Date.now(),
       isMuted: false,
       isOnHold: false
+      // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected during accept()
     };
     
     // Lưu cuộc gọi vào danh sách
@@ -555,6 +557,7 @@ export class SipCore {
         startTime: Date.now(),
         isMuted: false,
         isOnHold: false
+        // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected
       };
 
       // Lưu cuộc gọi vào danh sách
@@ -1074,7 +1077,8 @@ export class SipCore {
         remoteDisplayName,
         startTime: existingCallInfo?.startTime || Date.now(), // Use existing start time if available
         isMuted: existingCallInfo?.isMuted || false,
-        isOnHold: existingCallInfo?.isOnHold || false
+        isOnHold: existingCallInfo?.isOnHold || false,
+        handlingTabId: existingCallInfo?.handlingTabId // Preserve handlingTabId
       };
     } catch (error) {
       console.error('Failed to extract call info from session:', error);
@@ -1346,21 +1350,46 @@ export class SipCore {
 
       this.log('info', `Muting call: ${callId}`);
 
-      // Send mute request to all connected tabs via MessageBroker
-      await this.messageBroker.broadcast({
-        type: SipWorker.MessageType.CALL_MUTE,
-        id: `call-mute-${Date.now()}`,
-        timestamp: Date.now(),
-        data: { 
-          callId: callId,
-          action: 'mute'
-        }
-      });
+      // Get the tab that owns this session
+      const currentCallInfo = this.workerState?.getActiveCall(callId);
+      const handlingTabId = currentCallInfo?.handlingTabId;
 
-      this.log('info', `Mute request sent to all tabs for call: ${callId}`);
+      console.log(`SipCore.muteCall: callId=${callId}, currentCallInfo=`, currentCallInfo);
+      console.log(`SipCore.muteCall: handlingTabId=${handlingTabId}`);
+
+      if (handlingTabId) {
+        // Send mute request specifically to the tab that owns the session
+        this.log('info', `Sending mute request to handling tab: ${handlingTabId}`);
+        
+        await this.messageBroker.sendToTab(handlingTabId, {
+          type: SipWorker.MessageType.CALL_MUTE,
+          id: `call-mute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'mute'
+          }
+        });
+      } else {
+        // Fallback: broadcast to all tabs if handlingTabId is not known
+        // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
+        this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
+        this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
+        
+        await this.messageBroker.broadcast({
+          type: SipWorker.MessageType.CALL_MUTE,
+          id: `call-mute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'mute'
+          }
+        });
+      }
+
+      this.log('info', `Mute request sent for call: ${callId}`);
       
       // Update call state in WorkerState
-      const currentCallInfo = this.workerState.getActiveCall(callId);
       if (currentCallInfo) {
         this.workerState.setActiveCall(callId, {
           ...currentCallInfo,
@@ -1393,21 +1422,43 @@ export class SipCore {
 
       this.log('info', `Unmuting call: ${callId}`);
 
-      // Send unmute request to all connected tabs via MessageBroker
-      await this.messageBroker.broadcast({
-        type: SipWorker.MessageType.CALL_UNMUTE,
-        id: `call-unmute-${Date.now()}`,
-        timestamp: Date.now(),
-        data: { 
-          callId: callId,
-          action: 'unmute'
-        }
-      });
+      // Get the tab that owns this session
+      const currentCallInfo = this.workerState?.getActiveCall(callId);
+      const handlingTabId = currentCallInfo?.handlingTabId;
 
-      this.log('info', `Unmute request sent to all tabs for call: ${callId}`);
+      if (handlingTabId) {
+        // Send unmute request specifically to the tab that owns the session
+        this.log('info', `Sending unmute request to handling tab: ${handlingTabId}`);
+        
+        await this.messageBroker.sendToTab(handlingTabId, {
+          type: SipWorker.MessageType.CALL_UNMUTE,
+          id: `call-unmute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'unmute'
+          }
+        });
+      } else {
+        // Fallback: broadcast to all tabs if handlingTabId is not known
+        // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
+        this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
+        this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
+        
+        await this.messageBroker.broadcast({
+          type: SipWorker.MessageType.CALL_UNMUTE,
+          id: `call-unmute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'unmute'
+          }
+        });
+      }
+
+      this.log('info', `Unmute request sent for call: ${callId}`);
       
       // Update call state in WorkerState
-      const currentCallInfo = this.workerState.getActiveCall(callId);
       if (currentCallInfo) {
         this.workerState.setActiveCall(callId, {
           ...currentCallInfo,

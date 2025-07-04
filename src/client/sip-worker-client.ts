@@ -202,19 +202,25 @@ export class SipWorkerClient {
       }
       const result = await this.mediaHandler.muteAudio(callId);
       
-      // Gửi response về worker
-      this.sendMessage({
-        type: SipWorker.MessageType.CALL_MUTED,
-        id: `mute-response-${message.id}`,
-        tabId: this.tabId,
-        timestamp: Date.now(),
-        data: {
-          callId,
-          success: result.success,
-          action: 'mute',
-          error: result.error
-        }
-      });
+      // Only send response if this tab actually processed the mute (has the session)
+      if (result.success) {
+        // Gửi response về worker
+        this.sendMessage({
+          type: SipWorker.MessageType.CALL_MUTED,
+          id: `mute-response-${message.id}`,
+          tabId: this.tabId,
+          timestamp: Date.now(),
+          data: {
+            callId,
+            success: result.success,
+            action: 'mute',
+            error: result.error
+          }
+        });
+      } else {
+        // Tab doesn't have this session - this is normal, just log quietly
+        console.log('Tab does not own session for callId:', callId, '- ignoring mute request');
+      }
     });
 
     this.on(SipWorker.MessageType.CALL_UNMUTE, async (message) => {
@@ -239,19 +245,25 @@ export class SipWorkerClient {
       }
       const result = await this.mediaHandler.unmuteAudio(callId);
       
-      // Gửi response về worker
-      this.sendMessage({
-        type: SipWorker.MessageType.CALL_UNMUTED,
-        id: `unmute-response-${message.id}`,
-        tabId: this.tabId,
-        timestamp: Date.now(),
-        data: {
-          callId,
-          success: result.success,
-          action: 'unmute',
-          error: result.error
-        }
-      });
+      // Only send response if this tab actually processed the unmute (has the session)
+      if (result.success) {
+        // Gửi response về worker
+        this.sendMessage({
+          type: SipWorker.MessageType.CALL_UNMUTED,
+          id: `unmute-response-${message.id}`,
+          tabId: this.tabId,
+          timestamp: Date.now(),
+          data: {
+            callId,
+            success: result.success,
+            action: 'unmute',
+            error: result.error
+          }
+        });
+      } else {
+        // Tab doesn't have this session - this is normal, just log quietly
+        console.log('Tab does not own session for callId:', callId, '- ignoring unmute request');
+      }
     });
 
     // Xử lý call control responses

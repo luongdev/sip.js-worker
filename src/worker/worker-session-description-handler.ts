@@ -3,6 +3,7 @@ import { Logger } from 'sip.js/lib/core';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
 import { SipWorker } from '../common/types';
+import { WorkerState } from './worker-state';
 
 /**
  * Custom SessionDescriptionHandler for Worker mode
@@ -24,7 +25,8 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     tabManager: TabManager,
     sessionId: string,
     isEarlyMedia: boolean = false,
-    private session?: any // SIP.js session để detect context
+    private session?: any, // SIP.js session để detect context
+    private workerState?: WorkerState // WorkerState để update handlingTabId
   ) {
     this.logger = logger;
     this.messageBroker = messageBroker;
@@ -75,6 +77,24 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
         throw new Error('No tab available for media handling');
       }
       this.selectedTabId = selectedTab.id;
+      
+      // Update handlingTabId in WorkerState if available
+      if (this.workerState) {
+        const existingCallInfo = this.workerState.getActiveCall(this.sessionId);
+        if (existingCallInfo) {
+          console.log(`WorkerSDH: Setting handlingTabId ${selectedTab.id} for callId ${this.sessionId}`);
+          this.workerState.setActiveCall(this.sessionId, {
+            ...existingCallInfo,
+            handlingTabId: selectedTab.id
+          });
+          
+          // Verify it was set
+          const updatedCallInfo = this.workerState.getActiveCall(this.sessionId);
+          console.log(`WorkerSDH: Verified handlingTabId for ${this.sessionId}:`, updatedCallInfo?.handlingTabId);
+        } else {
+          console.warn(`WorkerSDH: No existing call info found for sessionId ${this.sessionId} when trying to set handlingTabId`);
+        }
+      }
     }
 
     this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, sessionId: ${this.sessionId})`);
@@ -274,6 +294,20 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
         throw new Error('No tab available for media handling');
       }
       this.selectedTabId = selectedTab.id;
+      
+      // Update handlingTabId in WorkerState if available
+      if (this.workerState) {
+        const existingCallInfo = this.workerState.getActiveCall(this.sessionId);
+        if (existingCallInfo) {
+          console.log(`WorkerSDH.setDescription: Setting handlingTabId ${selectedTab.id} for callId ${this.sessionId}`);
+          this.workerState.setActiveCall(this.sessionId, {
+            ...existingCallInfo,
+            handlingTabId: selectedTab.id
+          });
+        } else {
+          console.warn(`WorkerSDH.setDescription: No existing call info found for sessionId ${this.sessionId} when trying to set handlingTabId`);
+        }
+      }
     }
 
     this.logger.debug(`Setting remote SDP for tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, sessionId: ${this.sessionId})`);
@@ -312,7 +346,8 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
  */
 export function createWorkerSessionDescriptionHandlerFactory(
   messageBroker: MessageBroker,
-  tabManager: TabManager
+  tabManager: TabManager,
+  workerState?: WorkerState,
 ): (session: any, options?: any) => WorkerSessionDescriptionHandler {
   return (session: any, options?: any): WorkerSessionDescriptionHandler => {
     // Try to get logger from session's userAgent, fallback to console logger
@@ -346,7 +381,8 @@ export function createWorkerSessionDescriptionHandlerFactory(
       tabManager,
       sessionId,
       isEarlyMedia,
-      session // Pass session để detect context
+      session, // Pass session để detect context
+      workerState // Pass workerState để update handlingTabId
     );
   };
 } 
