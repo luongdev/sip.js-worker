@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
-<head>
+  <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SIP Worker Client Demo - With Media Handler</title>
@@ -172,9 +172,153 @@
             background: #f44336;
             border-color: #f44336;
         }
+
+        .dtmf-keypad {
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+
+        .dtmf-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            max-width: 200px;
+            margin: 0 auto;
+        }
+
+        .dtmf-btn {
+            width: 60px;
+            height: 60px;
+            font-size: 18px;
+            font-weight: bold;
+            border: 2px solid #ddd;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .dtmf-btn:hover:not(:disabled) {
+            background: #e3f2fd;
+            border-color: #2196F3;
+            transform: scale(1.05);
+        }
+
+        .dtmf-btn:active {
+            transform: scale(0.95);
+        }
+
+        .dtmf-btn:disabled {
+            background: #f5f5f5;
+            color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .dtmf-input {
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 16px;
+            font-family: monospace;
+        }
+
+        /* Call Control Styles */
+        .call-control {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .control-btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .control-btn.mute {
+            background: #ff9800;
+            color: white;
+        }
+
+        .control-btn.mute:hover:not(:disabled) {
+            background: #e68900;
+        }
+
+        .control-btn.unmute {
+            background: #4caf50;
+            color: white;
+        }
+
+        .control-btn.unmute:hover:not(:disabled) {
+            background: #45a049;
+        }
+
+        .control-btn.hold {
+            background: #2196f3;
+            color: white;
+        }
+
+        .control-btn.hold:hover:not(:disabled) {
+            background: #1976d2;
+        }
+
+        .control-btn.unhold {
+            background: #9c27b0;
+            color: white;
+        }
+
+        .control-btn.unhold:hover:not(:disabled) {
+            background: #7b1fa2;
+        }
+
+        .control-btn.transfer {
+            background: #795548;
+            color: white;
+            width: 100%;
+        }
+
+        .control-btn.transfer:hover:not(:disabled) {
+            background: #5d4037;
+        }
+
+        .transfer-section {
+            margin-top: 15px;
+        }
+
+        .transfer-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .transfer-input:disabled {
+            background: #f5f5f5;
+            color: #999;
+        }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container">
         <!-- Cấu hình và Controls -->
         <div class="section">
@@ -275,6 +419,49 @@
                     <audio id="remote-audio" controls autoplay></audio>
                 </div>
             </div>
+
+            <!-- DTMF Keypad -->
+            <div class="dtmf-keypad">
+                <h3>DTMF Keypad</h3>
+                <div class="form-group">
+                    <input type="text" id="dtmf-input" class="dtmf-input" placeholder="DTMF tones" readonly>
+                </div>
+                <div class="dtmf-grid">
+                    <button class="dtmf-btn" data-tone="1">1</button>
+                    <button class="dtmf-btn" data-tone="2">2</button>
+                    <button class="dtmf-btn" data-tone="3">3</button>
+                    <button class="dtmf-btn" data-tone="4">4</button>
+                    <button class="dtmf-btn" data-tone="5">5</button>
+                    <button class="dtmf-btn" data-tone="6">6</button>
+                    <button class="dtmf-btn" data-tone="7">7</button>
+                    <button class="dtmf-btn" data-tone="8">8</button>
+                    <button class="dtmf-btn" data-tone="9">9</button>
+                    <button class="dtmf-btn" data-tone="*">*</button>
+                    <button class="dtmf-btn" data-tone="0">0</button>
+                    <button class="dtmf-btn" data-tone="#">#</button>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <button id="dtmf-send" disabled style="width: auto; margin-right: 10px;">Send DTMF</button>
+                    <button id="dtmf-clear" style="width: auto; background: #f44336;">Clear</button>
+                </div>
+            </div>
+
+            <!-- Call Control Section -->
+            <div class="call-control">
+                <h3>Call Controls</h3>
+                <div class="control-grid">
+                    <button id="mute-call" class="control-btn mute" disabled>Mute</button>
+                    <button id="unmute-call" class="control-btn unmute" disabled>Unmute</button>
+                    <button id="hold-call" class="control-btn hold" disabled>Hold</button>
+                    <button id="unhold-call" class="control-btn unhold" disabled>Unhold</button>
+                </div>
+                <div class="transfer-section">
+                    <div class="form-group">
+                        <input type="text" id="transfer-target" class="transfer-input" placeholder="Transfer to URI (e.g., sip:user@domain.com)" disabled>
+                    </div>
+                    <button id="transfer-call" class="control-btn transfer" disabled>Transfer</button>
+                </div>
+            </div>
         </div>
         
         <!-- Logs -->
@@ -319,7 +506,16 @@
             incomingCaller: document.getElementById('incoming-caller'),
             incomingCallId: document.getElementById('incoming-call-id'),
             answerBtn: document.getElementById('answer-btn'),
-            rejectBtn: document.getElementById('reject-btn')
+            rejectBtn: document.getElementById('reject-btn'),
+            dtmfInput: document.getElementById('dtmf-input'),
+            dtmfSend: document.getElementById('dtmf-send'),
+            dtmfClear: document.getElementById('dtmf-clear'),
+            muteCall: document.getElementById('mute-call'),
+            unmuteCall: document.getElementById('unmute-call'),
+            holdCall: document.getElementById('hold-call'),
+            unholdCall: document.getElementById('unhold-call'),
+            transferTarget: document.getElementById('transfer-target'),
+            transferCall: document.getElementById('transfer-call')
         };
 
         // Initialize client
@@ -338,6 +534,14 @@
                 sipClient.on('call_incoming', handleIncomingCall);
                 sipClient.on('state_sync', handleStateSync);
                 sipClient.on('log', handleLog);
+                sipClient.on('dtmf_sent', handleDtmfSent);
+                sipClient.on('dtmf_failed', handleDtmfFailed);
+                sipClient.on('call_muted', handleCallMuted);
+                sipClient.on('call_unmuted', handleCallUnmuted);
+                sipClient.on('call_held', handleCallHeld);
+                sipClient.on('call_unheld', handleCallUnheld);
+                sipClient.on('call_transferred', handleCallTransferred);
+                sipClient.on('call_transfer_failed', handleCallTransferFailed);
                 
                 log('info', 'SipWorkerClient initialized with SharedWorker');
             } catch (error) {
@@ -380,11 +584,22 @@
             if (callInfo) {
                 currentCallId = callInfo.id;
                 updateCallStatus(callInfo.state);
-                log('info', `Call ${callInfo.id}: ${callInfo.state}`);
+                
+                // Log call progress with mute/hold status
+                let statusMessage = `Call ${callInfo.id}: ${callInfo.state}`;
+                if (callInfo.isMuted) statusMessage += ' (MUTED)';
+                if (callInfo.isOnHold) statusMessage += ' (ON HOLD)';
+                log('info', statusMessage);
                 
                 if (callInfo.state === 'established') {
                     elements.hangUpBtn.disabled = false;
                     elements.makeCallBtn.disabled = true;
+                    elements.dtmfSend.disabled = false;
+                    updateDtmfButtons(false);
+                    updateCallControlButtons(false);
+                    
+                    // Update button states based on mute/hold status
+                    updateCallControlButtonStates(callInfo.isMuted, callInfo.isOnHold);
                 }
             }
         }
@@ -395,6 +610,16 @@
                 updateCallStatus('none');
                 elements.hangUpBtn.disabled = true;
                 elements.makeCallBtn.disabled = false;
+                elements.dtmfSend.disabled = true;
+                updateDtmfButtons(true);
+                updateCallControlButtons(true);
+                
+                // Reset call control button states
+                elements.muteCall.style.opacity = '1';
+                elements.unmuteCall.style.opacity = '0.5';
+                elements.holdCall.style.opacity = '1';
+                elements.unholdCall.style.opacity = '0.5';
+                
                 currentCallId = null;
                 
                 // Hide incoming call UI
@@ -487,6 +712,12 @@
                     if (activeCall.state === 'established') {
                         elements.hangUpBtn.disabled = false;
                         elements.makeCallBtn.disabled = true;
+                        elements.dtmfSend.disabled = false;
+                        updateDtmfButtons(false);
+                        updateCallControlButtons(false);
+                        
+                        // Update button states based on mute/hold status from synced data
+                        updateCallControlButtonStates(activeCall.isMuted || false, activeCall.isOnHold || false);
                     } else if (activeCall.state === 'ringing' && activeCall.direction === 'incoming') {
                         // Show incoming call UI
                         elements.incomingCaller.textContent = activeCall.remoteDisplayName || activeCall.remoteUri || 'Unknown';
@@ -501,6 +732,9 @@
                 // No active calls
                 updateCallStatus('none');
                 elements.hangUpBtn.disabled = true;
+                elements.dtmfSend.disabled = true;
+                updateDtmfButtons(true);
+                updateCallControlButtons(true);
                 elements.incomingCall.style.display = 'none';
                 currentCallId = null;
                 
@@ -631,6 +865,176 @@
             }
         });
 
+        // DTMF Functions
+        function handleDtmfSent(message) {
+            const response = message.data;
+            log('info', `DTMF sent successfully: ${response.tones}`);
+        }
+
+        function handleDtmfFailed(message) {
+            const response = message.data;
+            log('error', `DTMF failed: ${response.error} (tones: ${response.tones})`);
+        }
+
+        function updateDtmfButtons(disabled) {
+            const dtmfButtons = document.querySelectorAll('.dtmf-btn');
+            dtmfButtons.forEach(btn => {
+                btn.disabled = disabled;
+            });
+        }
+
+        function updateCallControlButtons(disabled) {
+            elements.muteCall.disabled = disabled;
+            elements.unmuteCall.disabled = disabled;
+            elements.holdCall.disabled = disabled;
+            elements.unholdCall.disabled = disabled;
+            elements.transferTarget.disabled = disabled;
+            elements.transferCall.disabled = disabled;
+        }
+
+        function updateCallControlButtonStates(isMuted, isOnHold) {
+            // Update button text and states based on current mute/hold status
+            if (isMuted) {
+                elements.muteCall.style.opacity = '0.5';
+                elements.unmuteCall.style.opacity = '1';
+            } else {
+                elements.muteCall.style.opacity = '1';
+                elements.unmuteCall.style.opacity = '0.5';
+            }
+            
+            if (isOnHold) {
+                elements.holdCall.style.opacity = '0.5';
+                elements.unholdCall.style.opacity = '1';
+            } else {
+                elements.holdCall.style.opacity = '1';
+                elements.unholdCall.style.opacity = '0.5';
+            }
+        }
+
+        // Call Control Event Handlers
+        function handleCallMuted(message) {
+            const response = message.data;
+            log('info', `Call muted successfully: ${response.callId}`);
+            // Update button state to show muted
+            elements.muteCall.style.opacity = '0.5';
+            elements.unmuteCall.style.opacity = '1';
+        }
+
+        function handleCallUnmuted(message) {
+            const response = message.data;
+            log('info', `Call unmuted successfully: ${response.callId}`);
+            // Update button state to show unmuted
+            elements.muteCall.style.opacity = '1';
+            elements.unmuteCall.style.opacity = '0.5';
+        }
+
+        function handleCallHeld(message) {
+            const response = message.data;
+            log('info', `Call held successfully: ${response.callId}`);
+            // Update button state to show on hold
+            elements.holdCall.style.opacity = '0.5';
+            elements.unholdCall.style.opacity = '1';
+        }
+
+        function handleCallUnheld(message) {
+            const response = message.data;
+            log('info', `Call unheld successfully: ${response.callId}`);
+            // Update button state to show not on hold
+            elements.holdCall.style.opacity = '1';
+            elements.unholdCall.style.opacity = '0.5';
+        }
+
+        function handleCallTransferred(message) {
+            const response = message.data;
+            log('info', `Call transferred successfully: ${response.callId}`);
+        }
+
+        function handleCallTransferFailed(message) {
+            const response = message.data;
+            log('error', `Call transfer failed: ${response.error} (callId: ${response.callId})`);
+        }
+
+        // DTMF Button handlers
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('dtmf-btn')) {
+                const tone = e.target.dataset.tone;
+                if (tone) {
+                    elements.dtmfInput.value += tone;
+                    log('info', `Added DTMF tone: ${tone}`);
+                }
+            }
+        });
+
+        elements.dtmfSend.addEventListener('click', () => {
+            const tones = elements.dtmfInput.value.trim();
+            if (tones && currentCallId) {
+                sipClient.sendDtmf(currentCallId, tones);
+                log('info', `Sending DTMF: ${tones}`);
+                elements.dtmfInput.value = ''; // Clear after sending
+            } else if (!currentCallId) {
+                log('error', 'No active call to send DTMF');
+            } else {
+                log('error', 'No DTMF tones to send');
+            }
+        });
+
+        elements.dtmfClear.addEventListener('click', () => {
+            elements.dtmfInput.value = '';
+            log('info', 'DTMF input cleared');
+        });
+
+        // Call Control Button Handlers
+        elements.muteCall.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.muteCall(currentCallId);
+                log('info', `Muting call: ${currentCallId}`);
+            } else {
+                log('error', 'No active call to mute');
+            }
+        });
+
+        elements.unmuteCall.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.unmuteCall(currentCallId);
+                log('info', `Unmuting call: ${currentCallId}`);
+            } else {
+                log('error', 'No active call to unmute');
+            }
+        });
+
+        elements.holdCall.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.holdCall(currentCallId);
+                log('info', `Holding call: ${currentCallId}`);
+            } else {
+                log('error', 'No active call to hold');
+            }
+        });
+
+        elements.unholdCall.addEventListener('click', () => {
+            if (currentCallId) {
+                sipClient.unholdCall(currentCallId);
+                log('info', `Unholding call: ${currentCallId}`);
+            } else {
+                log('error', 'No active call to unhold');
+            }
+        });
+
+        elements.transferCall.addEventListener('click', () => {
+            if (currentCallId) {
+                const targetUri = elements.transferTarget.value.trim();
+                if (targetUri) {
+                    sipClient.transferCall(currentCallId, targetUri);
+                    log('info', `Transferring call ${currentCallId} to ${targetUri}`);
+                    elements.transferTarget.value = ''; // Clear after transfer
+                } else {
+                    log('error', 'No target URI specified for transfer');
+                }
+            } else {
+                log('error', 'No active call to transfer');
+            }
+        });
+
         // Logging function
         function log(level, message) {
             const timestamp = new Date().toLocaleTimeString();
@@ -661,5 +1065,5 @@
             }
         });
     </script>
-</body>
-</html> 
+  </body>
+</html>

@@ -339,7 +339,8 @@ export class SipCore {
       // Tạo WorkerSessionDescriptionHandlerFactory
       const sessionDescriptionHandlerFactory = createWorkerSessionDescriptionHandlerFactory(
         this.messageBroker,
-        this.tabManager
+        this.tabManager,
+        this.workerState
       );
 
       // Tạo cấu hình UserAgent
@@ -428,7 +429,10 @@ export class SipCore {
       state: SipWorker.CallState.RINGING,
       remoteUri: invitation.remoteIdentity.uri.toString(),
       remoteDisplayName: invitation.remoteIdentity.displayName || undefined,
-      startTime: Date.now()
+      startTime: Date.now(),
+      isMuted: false,
+      isOnHold: false
+      // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected during accept()
     };
     
     // Lưu cuộc gọi vào danh sách
@@ -517,11 +521,18 @@ export class SipCore {
             video: false
           }
         },
+
         extraHeaders: extraHeaders,
         params: { callId },
         earlyMedia: true, // Enable early media support
       } as InviterOptions as any;
       
+      // Hack: Thêm callId vào sessionDescriptionHandlerOptions để truyền cho factory
+      if (inviterOptions.sessionDescriptionHandlerOptions) {
+        (inviterOptions.sessionDescriptionHandlerOptions as any).callId = callId;
+        console.log('SipCore: Set callId in invite options:', callId);
+      }
+
       // Tạo Inviter với custom Call-ID thông qua params
       // Sử dụng trick: tạo một inviter tạm để lấy outgoingRequestMessage, sau đó hack callId
       const inviter = new Inviter(this.userAgent, targetUri, inviterOptions);
@@ -543,7 +554,10 @@ export class SipCore {
         state: SipWorker.CallState.CONNECTING,
         remoteUri: request.targetUri,
         remoteDisplayName: targetUri.toString() || undefined,
-        startTime: Date.now()
+        startTime: Date.now(),
+        isMuted: false,
+        isOnHold: false
+        // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected
       };
 
       // Lưu cuộc gọi vào danh sách
@@ -714,14 +728,20 @@ export class SipCore {
       this.log('info', `Accepting incoming call: ${callId}`);
 
       // Chấp nhận cuộc gọi với media constraints
-      await session.accept({
+      const acceptOptions = {
         sessionDescriptionHandlerOptions: {
           constraints: {
             audio: true,
             video: false
           }
         }
-      });
+      };
+
+      // Hack: Thêm callId vào sessionDescriptionHandlerOptions để truyền cho factory
+      (acceptOptions.sessionDescriptionHandlerOptions as any).callId = callId;
+      console.log('SipCore: Set callId in accept options:', callId);
+
+      await session.accept(acceptOptions);
 
       this.log('info', `Call ${callId} accepted successfully`);
       return { success: true };
@@ -1046,13 +1066,19 @@ export class SipCore {
           callState = SipWorker.CallState.CONNECTING;
       }
 
+      // Get existing call info from WorkerState to preserve mute/hold states
+      const existingCallInfo = this.workerState?.getActiveCall(callId);
+      
       return {
         id: callId,
         direction: isOutgoing ? SipWorker.CallDirection.OUTGOING : SipWorker.CallDirection.INCOMING,
         state: callState,
         remoteUri,
         remoteDisplayName,
-        startTime: Date.now() // Approximation, real start time would need to be tracked
+        startTime: existingCallInfo?.startTime || Date.now(), // Use existing start time if available
+        isMuted: existingCallInfo?.isMuted || false,
+        isOnHold: existingCallInfo?.isOnHold || false,
+        handlingTabId: existingCallInfo?.handlingTabId // Preserve handlingTabId
       };
     } catch (error) {
       console.error('Failed to extract call info from session:', error);
@@ -1269,6 +1295,312 @@ export class SipCore {
    */
   public isRegistered(): boolean {
     return this.registered;
+  }
+
+  /**
+   * Gửi DTMF tones
+   * @param callId ID của cuộc gọi
+   * @param tones Chuỗi DTMF tones
+   * @param options Tùy chọn DTMF
+   * @returns Promise với kết quả
+   */
+  public async sendDtmf(callId: string, tones: string, options?: any): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Sending DTMF tones: ${tones} for call: ${callId}`);
+
+      // Gửi DTMF qua session
+      const result = session.sessionDescriptionHandler?.sendDtmf(tones, options);
+      
+      if (result) {
+        this.log('info', `DTMF sent successfully: ${tones}`);
+        return { success: true };
+      } else {
+        return { success: false, error: 'Failed to send DTMF' };
+      }
+    } catch (error: any) {
+      this.log('error', `Failed to send DTMF: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Mute cuộc gọi
+   * @param callId ID của cuộc gọi
+   * @returns Promise với kết quả
+   */
+  public async muteCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Muting call: ${callId}`);
+
+      // Get the tab that owns this session
+      const currentCallInfo = this.workerState?.getActiveCall(callId);
+      const handlingTabId = currentCallInfo?.handlingTabId;
+
+      console.log(`SipCore.muteCall: callId=${callId}, currentCallInfo=`, currentCallInfo);
+      console.log(`SipCore.muteCall: handlingTabId=${handlingTabId}`);
+
+      if (handlingTabId) {
+        // Send mute request specifically to the tab that owns the session
+        this.log('info', `Sending mute request to handling tab: ${handlingTabId}`);
+        
+        await this.messageBroker.sendToTab(handlingTabId, {
+          type: SipWorker.MessageType.CALL_MUTE,
+          id: `call-mute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'mute'
+          }
+        });
+      } else {
+        // Fallback: broadcast to all tabs if handlingTabId is not known
+        // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
+        this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
+        this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
+        
+        await this.messageBroker.broadcast({
+          type: SipWorker.MessageType.CALL_MUTE,
+          id: `call-mute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'mute'
+          }
+        });
+      }
+
+      this.log('info', `Mute request sent for call: ${callId}`);
+      
+      // Update call state in WorkerState
+      if (currentCallInfo) {
+        this.workerState.setActiveCall(callId, {
+          ...currentCallInfo,
+          isMuted: true
+        });
+      }
+      
+      return { success: true };
+    } catch (error: any) {
+      this.log('error', `Failed to mute call: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unmute cuộc gọi
+   * @param callId ID của cuộc gọi
+   * @returns Promise với kết quả
+   */
+  public async unmuteCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Unmuting call: ${callId}`);
+
+      // Get the tab that owns this session
+      const currentCallInfo = this.workerState?.getActiveCall(callId);
+      const handlingTabId = currentCallInfo?.handlingTabId;
+
+      if (handlingTabId) {
+        // Send unmute request specifically to the tab that owns the session
+        this.log('info', `Sending unmute request to handling tab: ${handlingTabId}`);
+        
+        await this.messageBroker.sendToTab(handlingTabId, {
+          type: SipWorker.MessageType.CALL_UNMUTE,
+          id: `call-unmute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'unmute'
+          }
+        });
+      } else {
+        // Fallback: broadcast to all tabs if handlingTabId is not known
+        // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
+        this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
+        this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
+        
+        await this.messageBroker.broadcast({
+          type: SipWorker.MessageType.CALL_UNMUTE,
+          id: `call-unmute-${Date.now()}`,
+          timestamp: Date.now(),
+          data: { 
+            callId: callId,
+            action: 'unmute'
+          }
+        });
+      }
+
+      this.log('info', `Unmute request sent for call: ${callId}`);
+      
+      // Update call state in WorkerState
+      if (currentCallInfo) {
+        this.workerState.setActiveCall(callId, {
+          ...currentCallInfo,
+          isMuted: false
+        });
+      }
+      
+      return { success: true };
+    } catch (error: any) {
+      this.log('error', `Failed to unmute call: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Hold cuộc gọi
+   * @param callId ID của cuộc gọi
+   * @returns Promise với kết quả
+   */
+  public async holdCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Holding call: ${callId}`);
+
+      // TODO: Implement proper hold via SDP re-negotiation with modifiers
+      // For now, just update state without actual SDP manipulation
+      // This will be implemented when SessionDescriptionHandlerOptions/Modifiers are ready
+      
+      this.log('info', `Hold operation simulated for call: ${callId} (SDP re-negotiation not yet implemented)`);
+
+      // Update call state in WorkerState
+      const currentCallInfo = this.workerState.getActiveCall(callId);
+      if (currentCallInfo) {
+        this.workerState.setActiveCall(callId, {
+          ...currentCallInfo,
+          isOnHold: true
+        });
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      this.log('error', `Failed to hold call: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unhold cuộc gọi
+   * @param callId ID của cuộc gọi
+   * @returns Promise với kết quả
+   */
+  public async unholdCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Unholding call: ${callId}`);
+
+      // TODO: Implement proper unhold via SDP re-negotiation with modifiers
+      // For now, just update state without actual SDP manipulation
+      // This will be implemented when SessionDescriptionHandlerOptions/Modifiers are ready
+      
+      this.log('info', `Unhold operation simulated for call: ${callId} (SDP re-negotiation not yet implemented)`);
+
+      // Update call state in WorkerState
+      const currentCallInfo = this.workerState.getActiveCall(callId);
+      if (currentCallInfo) {
+        this.workerState.setActiveCall(callId, {
+          ...currentCallInfo,
+          isOnHold: false
+        });
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      this.log('error', `Failed to unhold call: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Transfer cuộc gọi (blind transfer)
+   * @param callId ID của cuộc gọi
+   * @param targetUri URI đích
+   * @param extraHeaders Các header tùy chọn
+   * @returns Promise với kết quả
+   */
+  public async transferCall(callId: string, targetUri: string, extraHeaders?: Record<string, string>): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return { success: false, error: 'Call not found' };
+      }
+
+      if (session.state !== SessionState.Established) {
+        return { success: false, error: 'Call is not established' };
+      }
+
+      this.log('info', `Transferring call ${callId} to ${targetUri}`);
+
+      // SIP.js refer implementation
+      if (session instanceof Invitation || session instanceof Inviter) {
+        // Create refer target URI
+        const referTo = UserAgent.makeURI(targetUri);
+        if (!referTo) {
+          return { success: false, error: 'Invalid target URI' };
+        }
+
+        // Send REFER request
+        const referOptions = extraHeaders ? {
+          requestOptions: {
+            extraHeaders: Object.entries(extraHeaders).map(([k, v]) => `${k}: ${v}`)
+          }
+        } : {};
+        
+        const referrer = await session.refer(referTo, referOptions);
+
+        // TODO: Implement proper REFER state monitoring
+        // For now, assume transfer is successful if REFER was sent
+        this.log('info', `REFER sent for call transfer: ${callId}`);
+        return { success: true };
+      }
+
+      return { success: false, error: 'Session does not support transfer' };
+    } catch (error: any) {
+      this.log('error', `Failed to transfer call: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   /**

@@ -61,6 +61,27 @@ export namespace SipWorker {
     STATE_SYNC = 'state_sync',               // Worker gửi trạng thái hiện tại
     STATE_CHANGED = 'state_changed',         // Worker thông báo trạng thái đã thay đổi
 
+    // DTMF
+    DTMF_SEND = 'dtmf_send',                 // Gửi DTMF tones
+    DTMF_SENT = 'dtmf_sent',                 // DTMF đã được gửi thành công
+    DTMF_FAILED = 'dtmf_failed',             // DTMF gửi thất bại
+
+    // Call Control
+    CALL_MUTE = 'call_mute',                 // Tắt tiếng cuộc gọi
+    CALL_UNMUTE = 'call_unmute',             // Bật tiếng cuộc gọi
+    CALL_HOLD = 'call_hold',                 // Giữ cuộc gọi
+    CALL_UNHOLD = 'call_unhold',             // Bỏ giữ cuộc gọi
+    CALL_TRANSFER = 'call_transfer',         // Chuyển cuộc gọi
+    CALL_REFER = 'call_refer',               // Refer cuộc gọi (attended transfer)
+    
+    // Call Control Responses
+    CALL_MUTED = 'call_muted',               // Cuộc gọi đã được tắt tiếng
+    CALL_UNMUTED = 'call_unmuted',           // Cuộc gọi đã được bật tiếng
+    CALL_HELD = 'call_held',                 // Cuộc gọi đã được giữ
+    CALL_UNHELD = 'call_unheld',             // Cuộc gọi đã được bỏ giữ
+    CALL_TRANSFERRED = 'call_transferred',   // Cuộc gọi đã được chuyển
+    CALL_TRANSFER_FAILED = 'call_transfer_failed', // Chuyển cuộc gọi thất bại
+
     // Tin nhắn hệ thống
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
@@ -637,7 +658,7 @@ export namespace SipWorker {
     endTime?: number;
 
     /**
-     * ID của tab đang xử lý cuộc gọi
+     * ID của tab đang xử lý cuộc gọi (owns the media session)
      */
     handlingTabId?: string;
 
@@ -655,6 +676,16 @@ export namespace SipWorker {
      * Lý do chi tiết khi cuộc gọi kết thúc (nếu có)
      */
     reason?: string;
+
+    /**
+     * Trạng thái mute của cuộc gọi
+     */
+    isMuted?: boolean;
+
+    /**
+     * Trạng thái hold của cuộc gọi
+     */
+    isOnHold?: boolean;
   }
 
   /**
@@ -758,6 +789,121 @@ export namespace SipWorker {
      * ICE candidate (khi có candidate mới)
      */
     candidate?: RTCIceCandidateInit;
+
+    /**
+     * Thông báo lỗi (nếu thất bại)
+     */
+    error?: string;
+  }
+
+  /**
+   * Yêu cầu gửi DTMF
+   */
+  export interface DtmfRequest {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Chuỗi DTMF tones cần gửi (0-9, *, #, A-D)
+     */
+    tones: string;
+
+    /**
+     * Thời gian giữa các tone (ms) - mặc định 100ms
+     */
+    duration?: number;
+
+    /**
+     * Thời gian nghỉ giữa các tone (ms) - mặc định 100ms
+     */
+    interToneGap?: number;
+  }
+
+  /**
+   * Phản hồi DTMF
+   */
+  export interface DtmfResponse {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Có thành công không
+     */
+    success: boolean;
+
+    /**
+     * Chuỗi DTMF tones đã gửi
+     */
+    tones: string;
+
+    /**
+     * Thông báo lỗi (nếu thất bại)
+     */
+    error?: string;
+  }
+
+  /**
+   * Yêu cầu call control (mute, hold, etc.)
+   */
+  export interface CallControlRequest {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Loại action
+     */
+    action: 'mute' | 'unmute' | 'hold' | 'unhold';
+  }
+
+  /**
+   * Yêu cầu transfer cuộc gọi
+   */
+  export interface CallTransferRequest {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * URI đích để transfer
+     */
+    targetUri: string;
+
+    /**
+     * Loại transfer
+     */
+    type: 'blind' | 'attended';
+
+    /**
+     * Các header tùy chọn
+     */
+    extraHeaders?: Record<string, string>;
+  }
+
+  /**
+   * Phản hồi call control
+   */
+  export interface CallControlResponse {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Có thành công không
+     */
+    success: boolean;
+
+    /**
+     * Action đã thực hiện
+     */
+    action: string;
 
     /**
      * Thông báo lỗi (nếu thất bại)

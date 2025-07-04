@@ -93,6 +93,8 @@ export class MediaHandler {
     this.callbacks = callbacks;
   }
 
+
+
   /**
    * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
@@ -120,6 +122,168 @@ export class MediaHandler {
         success: false,
         error: error.message || 'Unknown media error'
       };
+    }
+  }
+
+  /**
+   * Handle DTMF request from worker
+   */
+  public async handleDtmfRequest(request: SipWorker.DtmfRequest): Promise<SipWorker.DtmfResponse> {
+    console.log('Handling DTMF request:', request.tones, 'for call:', request.callId);
+
+    try {
+      const sessionState = this.sessions.get(request.callId);
+      if (!sessionState) {
+        throw new Error('Session not found');
+      }
+
+      // Get DTMF sender from the first audio track
+      const sender = sessionState.peerConnection.getSenders().find(s => 
+        s.track && s.track.kind === 'audio'
+      );
+
+      if (!sender) {
+        throw new Error('No audio sender found for DTMF');
+      }
+
+      if (!sender.dtmf) {
+        throw new Error('DTMF not supported');
+      }
+
+      // Send DTMF tones
+      const duration = request.duration || 100;
+      const interToneGap = request.interToneGap || 100;
+      
+      sender.dtmf.insertDTMF(request.tones, duration, interToneGap);
+
+      console.log('DTMF sent successfully:', request.tones);
+
+      return {
+        callId: request.callId,
+        success: true,
+        tones: request.tones
+      };
+    } catch (error: any) {
+      console.error('DTMF request failed:', error);
+      return {
+        callId: request.callId,
+        success: false,
+        tones: request.tones,
+        error: error.message || 'Unknown DTMF error'
+      };
+    }
+  }
+
+  /**
+   * Mute audio tracks for a session (now callId = sessionId thanks to our hack)
+   */
+  public async muteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Muting audio for call/session:', callId);
+    console.log('Available sessions:', Array.from(this.sessions.keys()));
+
+    try {
+      // Now callId should be the same as sessionId thanks to our hack
+      const sessionState = this.sessions.get(callId);
+      if (!sessionState || !sessionState.localStream) {
+        // This tab doesn't have this session - this is normal when forwarding to specific tab
+        console.log('Session not found for callId:', callId, '- this tab does not own this session');
+        console.log('Available sessions:', Array.from(this.sessions.keys()));
+        return { success: false, error: 'Session not found in this tab' };
+      }
+
+      // Disable all audio tracks
+      sessionState.localStream.getAudioTracks().forEach(track => {
+        track.enabled = false;
+        console.log('Audio track muted:', track.id);
+      });
+
+      console.log('Audio muted successfully for call/session:', callId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to mute audio:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unmute audio tracks for a session (now callId = sessionId thanks to our hack)
+   */
+  public async unmuteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Unmuting audio for call/session:', callId);
+
+    try {
+      // Now callId should be the same as sessionId thanks to our hack
+      const sessionState = this.sessions.get(callId);
+      if (!sessionState || !sessionState.localStream) {
+        // This tab doesn't have this session - this is normal when forwarding to specific tab
+        console.log('Session not found for callId:', callId, '- this tab does not own this session');
+        console.log('Available sessions:', Array.from(this.sessions.keys()));
+        return { success: false, error: 'Session not found in this tab' };
+      }
+
+      // Enable all audio tracks
+      sessionState.localStream.getAudioTracks().forEach(track => {
+        track.enabled = true;
+        console.log('Audio track unmuted:', track.id);
+      });
+
+      console.log('Audio unmuted successfully for call/session:', callId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to unmute audio:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Mute video tracks for a session
+   */
+  public async muteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Muting video for session:', sessionId);
+
+    try {
+      const sessionState = this.sessions.get(sessionId);
+      if (!sessionState || !sessionState.localStream) {
+        throw new Error('Session or local stream not found');
+      }
+
+      // Disable all video tracks
+      sessionState.localStream.getVideoTracks().forEach(track => {
+        track.enabled = false;
+        console.log('Video track muted:', track.id);
+      });
+
+      console.log('Video muted successfully for session:', sessionId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to mute video:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Unmute video tracks for a session
+   */
+  public async unmuteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Unmuting video for session:', sessionId);
+
+    try {
+      const sessionState = this.sessions.get(sessionId);
+      if (!sessionState || !sessionState.localStream) {
+        throw new Error('Session or local stream not found');
+      }
+
+      // Enable all video tracks
+      sessionState.localStream.getVideoTracks().forEach(track => {
+        track.enabled = true;
+        console.log('Video track unmuted:', track.id);
+      });
+
+      console.log('Video unmuted successfully for session:', sessionId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to unmute video:', error);
+      return { success: false, error: error.message };
     }
   }
 
