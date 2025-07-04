@@ -94,8 +94,6 @@ export class MediaHandler {
     this.callbacks = callbacks;
   }
 
-
-
   /**
    * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
@@ -429,38 +427,89 @@ export class MediaHandler {
       sessionState = await this.createSession(callId);
     }
 
-    // Determine SDP type based on current signaling state (like SIP.js)
     const pc = sessionState.peerConnection;
-    let type: RTCSdpType;
+    console.log('MediaHandler.setRemoteDescription - current signaling state:', pc.signalingState);
     
+    // Parse SDP to determine type (more reliable than signaling state)
+    let type: RTCSdpType;
+    const isOffer = sdp.includes('a=setup:actpass') || sdp.includes('a=setup:active') || !sdp.includes('a=setup:passive');
+    
+    // Primary logic: Use signaling state when reliable
     switch (pc.signalingState) {
       case 'stable':
-        // If we are stable, this should be a remote offer
+        // In stable state, incoming SDP should be an offer
         type = 'offer';
         break;
       case 'have-local-offer':
-        // If we made an offer, this should be a remote answer
+        // We made an offer, incoming should be answer
         type = 'answer';
         break;
+      case 'have-remote-offer':
+        // We already have remote offer - this might be early media update
+        console.warn('Already have remote offer, this might be early media or retransmission');
+        type = 'offer'; // Treat as updated offer
+        break;
+      case 'have-local-pranswer':
+      case 'have-remote-pranswer':
+        // Handle provisional answers
+        type = pc.signalingState === 'have-local-pranswer' ? 'answer' : 'offer';
+        break;
       default:
-        throw new Error(`Invalid signaling state for setRemoteDescription: ${pc.signalingState}`);
+        // Fallback: Determine from SDP content
+        type = isOffer ? 'offer' : 'answer';
+        console.warn(`Unusual signaling state (${pc.signalingState}), determined type from SDP content: ${type}`);
     }
 
     const remoteDescription: RTCSessionDescriptionInit = { type, sdp };
     
-    // Set remote description
-    await pc.setRemoteDescription(remoteDescription);
-    sessionState.remoteDescription = remoteDescription;
+    try {
+      console.log(`Setting remote description: type=${type}, signalingState=${pc.signalingState}`);
+      
+      // For 'have-remote-offer' state, we might need to rollback first
+      if (pc.signalingState === 'have-remote-offer' && type === 'offer') {
+        console.log('Rolling back previous remote offer before setting new one');
+        await pc.setRemoteDescription({ type: 'rollback' });
+      }
+      
+      await pc.setRemoteDescription(remoteDescription);
+      sessionState.remoteDescription = remoteDescription;
 
-    // Process queued ICE candidates
-    await this.processQueuedIceCandidates(sessionState);
+      // Process queued ICE candidates
+      await this.processQueuedIceCandidates(sessionState);
 
-    console.log('Set remote description for call:', callId, 'type:', type);
+      console.log('Set remote description for call:', callId, 'type:', type);
 
-    return {
-      callId,
-      success: true
-    };
+      return {
+        callId,
+        success: true
+      };
+    } catch (error: any) {
+      console.error('Failed to set remote description:', error);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        signalingState: pc.signalingState,
+        sdpType: type,
+        sdpLength: sdp.length
+      });
+      
+      // Try alternative approach for some common errors
+      if (error.name === 'InvalidStateError' && type === 'offer') {
+        try {
+          console.log('Retrying with rollback approach...');
+          await pc.setRemoteDescription({ type: 'rollback' });
+          await pc.setRemoteDescription(remoteDescription);
+          sessionState.remoteDescription = remoteDescription;
+          await this.processQueuedIceCandidates(sessionState);
+          console.log('Retry successful after rollback');
+          return { callId, success: true };
+        } catch (retryError) {
+          console.error('Retry also failed:', retryError);
+        }
+      }
+      
+      throw error;
+    }
   }
 
   /**

@@ -187,14 +187,26 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       
       // Update handlingTabId in WorkerState if available
       if (this.workerState) {
-        const existingCallInfo = this.workerState.getActiveCall(this.callId);
+        let existingCallInfo = this.workerState.getActiveCall(this.callId);
+        
         if (existingCallInfo) {
+          // Update existing call info with handlingTabId
           this.workerState.setActiveCall(this.callId, {
             ...existingCallInfo,
             handlingTabId: selectedTab.id
           });
-
-          console.log('WorkerSDH.getSelectedTab: Existing call info:', existingCallInfo);
+          console.log('WorkerSDH.getSelectedTab: Updated existing call info with handlingTabId:', this.callId, selectedTab.id);
+        } else {
+          // Create new call info if it doesn't exist (this shouldn't normally happen, but failsafe)
+          console.warn('WorkerSDH.getSelectedTab: No existing call info found, creating minimal call info for handlingTabId');
+          this.workerState.setActiveCall(this.callId, {
+            id: this.callId,
+            direction: SipWorker.CallDirection.OUTGOING, // Default, will be updated by SipCore
+            state: SipWorker.CallState.CONNECTING,
+            remoteUri: 'unknown',
+            startTime: Date.now(),
+            handlingTabId: selectedTab.id
+          } as SipWorker.CallInfo);
         }
       }
     }

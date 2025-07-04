@@ -5,7 +5,10 @@
 import { SipWorker } from '../common/types';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
-import { createWorkerSessionDescriptionHandlerFactory, WorkerSessionDescriptionHandlerOptions } from './worker-session-description-handler';
+import { 
+  createWorkerSessionDescriptionHandlerFactory, 
+  WorkerSessionDescriptionHandlerOptions,
+} from './worker-session-description-handler';
 import { 
   UserAgent, 
   UserAgentOptions, 
@@ -472,7 +475,6 @@ export class SipCore {
     const callId = uuidv4();
     
     try {
-      // Kiểm tra UserAgent đã được khởi tạo
       if (!this.userAgent) {
         return {
           success: false,
@@ -517,23 +519,15 @@ export class SipCore {
 
       const inviterOptions = {
         sessionDescriptionHandlerOptions: {
-          constraints: {
-            audio: true,
-            video: false
-          }
-        },
-
+          callId,
+          action: 'offer',
+          constraints: { audio: true, video: false }
+        } as WorkerSessionDescriptionHandlerOptions,
         extraHeaders: extraHeaders,
         params: { callId },
         earlyMedia: true, // Enable early media support
-      } as InviterOptions as any;
-      
-      // Hack: Thêm callId vào sessionDescriptionHandlerOptions để truyền cho factory
-      if (inviterOptions.sessionDescriptionHandlerOptions) {
-        (inviterOptions.sessionDescriptionHandlerOptions as any).callId = callId;
-        console.log('SipCore: Set callId in invite options:', callId);
-      }
-
+      } as InviterOptions;
+  
       // Tạo Inviter với custom Call-ID thông qua params
       // Sử dụng trick: tạo một inviter tạm để lấy outgoingRequestMessage, sau đó hack callId
       const inviter = new Inviter(this.userAgent, targetUri, inviterOptions);
@@ -557,7 +551,6 @@ export class SipCore {
         startTime: Date.now(),
         isMuted: false,
         isOnHold: false
-        // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected
       };
 
       // Lưu cuộc gọi vào danh sách
@@ -868,25 +861,33 @@ export class SipCore {
    * @param callInfo Thông tin cuộc gọi
    */
   private setupInvitationListeners(invitation: Invitation, callInfo: SipWorker.CallInfo): void {
+    // Set initial call info in WorkerState right away
+    if (this.workerState) {
+      this.workerState.setActiveCall(callInfo.id, callInfo);
+      console.log('SipCore.setupInvitationListeners: Initial call info set in WorkerState:', callInfo.id);
+    }
+    
     // Khi trạng thái invitation thay đổi
     invitation.stateChange.addListener((state) => {
       this.log('info', `Incoming call ${callInfo.id} state changed to: ${state}`);
       
+      const currentCallInfo = this.workerState?.getActiveCall(callInfo.id) || callInfo;
+      
       switch (state) {
         case SessionState.Establishing:
-          callInfo.state = SipWorker.CallState.CONNECTING;
-          this.broadcastCallStatus(callInfo);
+          currentCallInfo.state = SipWorker.CallState.CONNECTING;
+          this.broadcastCallStatus(currentCallInfo);
           break;
         case SessionState.Established:
-          callInfo.state = SipWorker.CallState.ESTABLISHED;
-          callInfo.establishedTime = Date.now();
-          this.broadcastCallStatus(callInfo);
+          currentCallInfo.state = SipWorker.CallState.ESTABLISHED;
+          currentCallInfo.establishedTime = Date.now();
+          this.broadcastCallStatus(currentCallInfo);
           break;
         case SessionState.Terminated:
-          callInfo.state = SipWorker.CallState.TERMINATED;
-          callInfo.endTime = Date.now();
+          currentCallInfo.state = SipWorker.CallState.TERMINATED;
+          currentCallInfo.endTime = Date.now();
           this.activeCalls.delete(callInfo.id);
-          this.broadcastCallStatus(callInfo);
+          this.broadcastCallStatus(currentCallInfo);
           
           // Broadcast CALL_TERMINATED để reset UI
           this.messageBroker.broadcast({
@@ -894,9 +895,10 @@ export class SipCore {
             id: `call-terminated-${Date.now()}`,
             timestamp: Date.now(),
             data: {
-              id: callInfo.id,
+              id: currentCallInfo.id,
               state: SipWorker.CallState.TERMINATED,
-              endTime: Date.now()
+              endTime: Date.now(),
+              handlingTabId: currentCallInfo.handlingTabId // Include handlingTabId for cleanup
             }
           });
           break;
@@ -905,41 +907,50 @@ export class SipCore {
   }
 
   /**
-   * Thiết lập event listeners cho Inviter
-   * @param inviter Inviter instance
+   * Thiết lập các sự kiện cho Inviter (cuộc gọi đi)
+   * @param inviter Inviter session
    * @param callInfo Thông tin cuộc gọi
    */
   private setupInviterListeners(inviter: Inviter, callInfo: SipWorker.CallInfo): void {
+    // Set initial call info in WorkerState right away
+    if (this.workerState) {
+      this.workerState.setActiveCall(callInfo.id, callInfo);
+      console.log('SipCore.setupInviterListeners: Initial call info set in WorkerState:', callInfo.id);
+    }
+    
     // Khi nhận được provisional response
     inviter.stateChange.addListener((state) => {
       this.log('info', `Call ${callInfo.id} state changed to: ${state}`);
       
+      // Get current call info from WorkerState to preserve handlingTabId
+      const currentCallInfo = this.workerState?.getActiveCall(callInfo.id) || callInfo;
+      
       switch (state) {
         case SessionState.Establishing:
-          callInfo.state = SipWorker.CallState.RINGING;
-          this.broadcastCallStatus(callInfo);
+          currentCallInfo.state = SipWorker.CallState.RINGING;
+          this.broadcastCallStatus(currentCallInfo);
           break;
         case SessionState.Established:
-          callInfo.state = SipWorker.CallState.ESTABLISHED;
-          callInfo.establishedTime = Date.now();
-          this.broadcastCallStatus(callInfo);
+          currentCallInfo.state = SipWorker.CallState.ESTABLISHED;
+          currentCallInfo.establishedTime = Date.now();
+          this.broadcastCallStatus(currentCallInfo);
           break;
         case SessionState.Terminated:
-          callInfo.state = SipWorker.CallState.TERMINATED;
-          callInfo.endTime = Date.now();
+          currentCallInfo.state = SipWorker.CallState.TERMINATED;
+          currentCallInfo.endTime = Date.now();
           
           // Trích xuất SIP status code nếu có
           if (inviter.delegate && (inviter.delegate as any).terminateReason) {
             const terminateReason = (inviter.delegate as any).terminateReason;
             if (terminateReason.statusCode) {
-              callInfo.statusCode = terminateReason.statusCode;
-              callInfo.reasonPhrase = terminateReason.reasonPhrase;
-              callInfo.reason = `${terminateReason.statusCode} ${terminateReason.reasonPhrase}`;
+              currentCallInfo.statusCode = terminateReason.statusCode;
+              currentCallInfo.reasonPhrase = terminateReason.reasonPhrase;
+              currentCallInfo.reason = `${terminateReason.statusCode} ${terminateReason.reasonPhrase}`;
             }
           }
           
           this.activeCalls.delete(callInfo.id);
-          this.broadcastCallStatus(callInfo);
+          this.broadcastCallStatus(currentCallInfo);
           
           // Broadcast CALL_TERMINATED để reset UI với SIP status code
           this.messageBroker.broadcast({
@@ -947,12 +958,13 @@ export class SipCore {
             id: `call-terminated-${Date.now()}`,
             timestamp: Date.now(),
             data: {
-              id: callInfo.id,
+              id: currentCallInfo.id,
               state: SipWorker.CallState.TERMINATED,
               endTime: Date.now(),
-              statusCode: callInfo.statusCode,
-              reasonPhrase: callInfo.reasonPhrase,
-              reason: callInfo.reason
+              statusCode: currentCallInfo.statusCode,
+              reasonPhrase: currentCallInfo.reasonPhrase,
+              reason: currentCallInfo.reason,
+              handlingTabId: currentCallInfo.handlingTabId // Include handlingTabId for cleanup
             }
           });
           break;
@@ -968,12 +980,25 @@ export class SipCore {
    * @param callInfo Thông tin cuộc gọi
    */
   private broadcastCallStatus(callInfo: SipWorker.CallInfo): void {
-    // Update WorkerState
+    // Update WorkerState with preserved handlingTabId and other important properties
     if (this.workerState) {
       if (callInfo.state === SipWorker.CallState.TERMINATED) {
         this.workerState.removeActiveCall(callInfo.id);
       } else {
-        this.workerState.setActiveCall(callInfo.id, callInfo);
+        // Get existing call info to preserve handlingTabId and other properties
+        const existingCallInfo = this.workerState.getActiveCall(callInfo.id);
+        const updatedCallInfo: SipWorker.CallInfo = {
+          ...callInfo,
+          // Preserve these critical properties from existing call info
+          handlingTabId: callInfo.handlingTabId || existingCallInfo?.handlingTabId,
+          isMuted: callInfo.isMuted ?? existingCallInfo?.isMuted ?? false,
+          isOnHold: callInfo.isOnHold ?? existingCallInfo?.isOnHold ?? false,
+          originalSdp: callInfo.originalSdp || existingCallInfo?.originalSdp,
+          startTime: callInfo.startTime || existingCallInfo?.startTime || Date.now()
+        };
+        
+        this.workerState.setActiveCall(callInfo.id, updatedCallInfo);
+        console.log('SipCore.broadcastCallStatus: Updated call info with preserved properties:', updatedCallInfo.id, 'handlingTabId:', updatedCallInfo.handlingTabId);
       }
     }
 
