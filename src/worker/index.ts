@@ -252,6 +252,39 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho SDP Cache
+  messageBroker.on(SipWorker.MessageType.MEDIA_SDP_CACHE, async (message, tabId, port) => {
+    console.log('Received SDP cache request:', message.data);
+    if (sipCore && workerState) {
+      const data = message.data as SipWorker.SdpCacheRequest;
+      if (data && data.callId && (data.localSdp || data.remoteSdp)) {
+        const callInfo = workerState.getActiveCall(data.callId);
+        console.log('CallInfo for SDP cache:', data.callId, !!callInfo);
+        if (callInfo) {
+          console.log('Caching SDP for hold/unhold:', data.callId, 'local length:', data.localSdp.length, 'remote length:', data.remoteSdp.length);
+          workerState.setActiveCall(data.callId, {
+            ...callInfo,
+            originalSdp: {
+              local: callInfo.originalSdp?.local ?? data.localSdp,
+              remote: callInfo.originalSdp?.remote ?? data.remoteSdp
+            }
+          });
+          
+          // Verify it was cached
+          const updatedCallInfo = workerState.getActiveCall(data.callId);
+          console.log('Verified SDP cache:', data.callId, !!updatedCallInfo?.originalSdp);
+          
+          return { success: true };
+        } else {
+          console.log('No callInfo found for SDP cache:', data.callId);
+        }
+      } else {
+        console.log('Invalid SDP cache data:', data);
+      }
+    }
+    return { success: false, error: 'Failed to cache SDP' };
+  });
+
   // Handler cho CALL_MUTE
   messageBroker.on(SipWorker.MessageType.CALL_MUTE, async (message, tabId, port) => {
     if (sipCore) {

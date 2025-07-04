@@ -19,6 +19,7 @@ import {
   InviterOptions
 } from 'sip.js';
 import { v4 as uuidv4 } from 'uuid';
+import { WorkerState } from './worker-state';
 
 // Định nghĩa LogLevel theo đúng định nghĩa từ sip.js
 type LogLevel = "debug" | "log" | "warn" | "error";
@@ -158,7 +159,7 @@ export class SipCore {
     messageBroker: MessageBroker,
     tabManager: TabManager,
     options: SipCoreOptions,
-    private workerState?: any // Import sau
+    private workerState?: WorkerState // Import sau
   ) {
     this.messageBroker = messageBroker;
     this.tabManager = tabManager;
@@ -1514,7 +1515,7 @@ export class SipCore {
       this.log('info', `Mute request sent for call: ${callId}`);
       
       // Update call state in WorkerState
-      if (currentCallInfo) {
+      if (currentCallInfo && this.workerState) {
         this.workerState.setActiveCall(callId, {
           ...currentCallInfo,
           isMuted: true
@@ -1583,7 +1584,7 @@ export class SipCore {
       this.log('info', `Unmute request sent for call: ${callId}`);
       
       // Update call state in WorkerState
-      if (currentCallInfo) {
+      if (currentCallInfo && this.workerState) {
         this.workerState.setActiveCall(callId, {
           ...currentCallInfo,
           isMuted: false
@@ -1598,82 +1599,108 @@ export class SipCore {
   }
 
   /**
-   * Hold cuộc gọi
+   * Hold cuộc gọi với SDP re-negotiation
    * @param callId ID của cuộc gọi
    * @returns Promise với kết quả
    */
   public async holdCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('SipCore.holdCall', callId);
+    
+    const session = this.activeCalls.get(callId);
+    if (!session) {
+      return { success: false, error: 'Call not found' };
+    }
+
+    const callInfo = this.workerState?.getActiveCall(callId);
+    if (!callInfo) {
+      return { success: false, error: 'Call info not found' };
+    }
+
     try {
-      const session = this.activeCalls.get(callId);
-      if (!session) {
-        return { success: false, error: 'Call not found' };
-      }
-
-      if (session.state !== SessionState.Established) {
-        return { success: false, error: 'Call is not established' };
-      }
-
-      this.log('info', `Holding call: ${callId}`);
-
-      // TODO: Implement proper hold via SDP re-negotiation with modifiers
-      // For now, just update state without actual SDP manipulation
-      // This will be implemented when SessionDescriptionHandlerOptions/Modifiers are ready
+      console.log('Sending hold re-INVITE for call:', callId);
       
-      this.log('info', `Hold operation simulated for call: ${callId} (SDP re-negotiation not yet implemented)`);
+      // Send re-INVITE with hold=true option and callId
+      await session.invite({
+        sessionDescriptionHandlerOptions: {
+          callId: callId,
+          hold: true
+        } as any
+      });
+      
+      console.log('Hold re-INVITE succeeded for call:', callId);
 
-      // Update call state in WorkerState
-      const currentCallInfo = this.workerState.getActiveCall(callId);
-      if (currentCallInfo) {
+      // Update isOnHold state after successful hold
+      if (this.workerState) {
         this.workerState.setActiveCall(callId, {
-          ...currentCallInfo,
+          ...callInfo,
           isOnHold: true
         });
+        console.log('Updated isOnHold=true for call:', callId);
       }
 
       return { success: true };
-    } catch (error: any) {
-      this.log('error', `Failed to hold call: ${error.message}`);
-      return { success: false, error: error.message };
+    } catch (error) {
+      console.error('Hold re-INVITE failed for call:', callId, error);
+      
+      // Check if it's a timeout error
+      if (error instanceof Error && error.message.includes('timeout')) {
+        return { success: false, error: `Hold operation timeout: ${error.message}` };
+      }
+      
+      return { success: false, error: `Hold failed: ${error}` };
     }
   }
 
   /**
-   * Unhold cuộc gọi
+   * Unhold cuộc gọi với SDP re-negotiation
    * @param callId ID của cuộc gọi
    * @returns Promise với kết quả
    */
   public async unholdCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('SipCore.unholdCall', callId);
+    
+    const session = this.activeCalls.get(callId);
+    if (!session) {
+      return { success: false, error: 'Call not found' };
+    }
+
+    const callInfo = this.workerState?.getActiveCall(callId);
+    if (!callInfo) {
+      return { success: false, error: 'Call info not found' };
+    }
+
     try {
-      const session = this.activeCalls.get(callId);
-      if (!session) {
-        return { success: false, error: 'Call not found' };
-      }
-
-      if (session.state !== SessionState.Established) {
-        return { success: false, error: 'Call is not established' };
-      }
-
-      this.log('info', `Unholding call: ${callId}`);
-
-      // TODO: Implement proper unhold via SDP re-negotiation with modifiers
-      // For now, just update state without actual SDP manipulation
-      // This will be implemented when SessionDescriptionHandlerOptions/Modifiers are ready
+      console.log('Sending unhold re-INVITE for call:', callId);
       
-      this.log('info', `Unhold operation simulated for call: ${callId} (SDP re-negotiation not yet implemented)`);
+      // Send re-INVITE with hold=false option and callId
+      await session.invite({
+        sessionDescriptionHandlerOptions: {
+          callId: callId,
+          hold: false
+        } as any
+      });
+      
+      console.log('Unhold re-INVITE succeeded for call:', callId);
 
-      // Update call state in WorkerState
-      const currentCallInfo = this.workerState.getActiveCall(callId);
-      if (currentCallInfo) {
+      // Update isOnHold state after successful unhold
+      if (this.workerState) {
         this.workerState.setActiveCall(callId, {
-          ...currentCallInfo,
+          ...callInfo,
           isOnHold: false
         });
+        console.log('Updated isOnHold=false for call:', callId);
       }
 
       return { success: true };
-    } catch (error: any) {
-      this.log('error', `Failed to unhold call: ${error.message}`);
-      return { success: false, error: error.message };
+    } catch (error) {
+      console.error('Unhold re-INVITE failed for call:', callId, error);
+      
+      // Check if it's a timeout error
+      if (error instanceof Error && error.message.includes('timeout')) {
+        return { success: false, error: `Unhold operation timeout: ${error.message}` };
+      }
+      
+      return { success: false, error: `Unhold failed: ${error}` };
     }
   }
 

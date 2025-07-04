@@ -8,6 +8,7 @@ export interface MediaHandlerCallbacks {
   sendSessionReady: (callId: string) => void;
   sendSessionFailed: (callId: string, error: string) => void;
   handleRemoteStream: (callId: string, stream: MediaStream) => void;
+  sendSdpCache: (callId: string, localSdp: string, remoteSdp: string) => void;
 }
 
 /**
@@ -339,6 +340,9 @@ export class MediaHandler {
 
     console.log('Created offer description for call:', callId);
 
+    // Cache SDP for hold/unhold if both local and remote are available
+    this.tryCacheSdp(callId, sessionState);
+
     return {
       callId,
       success: true,
@@ -398,6 +402,9 @@ export class MediaHandler {
     sessionState.localDescription = finalDescription;
 
     console.log('Created answer description for call:', callId);
+
+    // Cache SDP for hold/unhold if both local and remote are available
+    this.tryCacheSdp(callId, sessionState);
 
     return {
       callId,
@@ -797,5 +804,20 @@ export class MediaHandler {
       hasRemoteStream: !!sessionState.remoteStream,
       queuedCandidates: sessionState.iceCandidatesQueue.length
     };
+  }
+
+  /**
+   * Try to cache SDP for hold/unhold functionality
+   */
+  private tryCacheSdp(callId: string, sessionState: SessionState): void {
+    // Only cache when we have both local and remote descriptions
+    if ((sessionState.localDescription?.sdp || sessionState.remoteDescription?.sdp) && this.callbacks?.sendSdpCache) {
+      console.log('Caching SDP for hold/unhold functionality:', callId);
+      this.callbacks.sendSdpCache(
+        callId,
+        sessionState?.localDescription?.sdp || '',
+        sessionState?.remoteDescription?.sdp || ''
+      );
+    }
   }
 } 

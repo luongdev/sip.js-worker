@@ -55,6 +55,7 @@ export namespace SipWorker {
     MEDIA_ICE_CANDIDATE = 'media_ice_candidate',   // Trao đổi ICE candidates
     MEDIA_SESSION_READY = 'media_session_ready',   // Tab báo session đã sẵn sàng
     MEDIA_SESSION_FAILED = 'media_session_failed', // Tab báo session thất bại
+    MEDIA_SDP_CACHE = 'media_sdp_cache',           // Tab gửi SDP cache cho worker
 
     // State Sync
     STATE_REQUEST = 'state_request',         // Tab yêu cầu đồng bộ trạng thái
@@ -687,6 +688,14 @@ export namespace SipWorker {
      * Trạng thái hold của cuộc gọi
      */
     isOnHold?: boolean;
+
+    /**
+     * Original SDP cho hold/unhold
+     */
+    originalSdp?: {
+      local: string;
+      remote: string;
+    };
   }
 
   /**
@@ -820,6 +829,26 @@ export namespace SipWorker {
      * Thời gian nghỉ giữa các tone (ms) - mặc định 100ms
      */
     interToneGap?: number;
+  }
+
+  /**
+   * SDP Cache request để lưu original SDP
+   */
+  export interface SdpCacheRequest {
+    /**
+     * ID của cuộc gọi
+     */
+    callId: string;
+
+    /**
+     * Local SDP (original)
+     */
+    localSdp: string;
+
+    /**
+     * Remote SDP (original)
+     */
+    remoteSdp: string;
   }
 
   /**

@@ -103,6 +103,20 @@ export class SipWorkerClient {
         if (typeof (window as any).onSipRemoteStream === 'function') {
           (window as any).onSipRemoteStream(callId, stream, audioElement);
         }
+      },
+      sendSdpCache: (callId: string, localSdp: string, remoteSdp: string) => {
+        console.log('Sending SDP cache to worker for call:', callId);
+        this.sendMessage({
+          type: SipWorker.MessageType.MEDIA_SDP_CACHE,
+          id: `sdp-cache-${Date.now()}`,
+          tabId: this.tabId,
+          timestamp: Date.now(),
+          data: {
+            callId,
+            localSdp,
+            remoteSdp
+          }
+        });
       }
     };
     

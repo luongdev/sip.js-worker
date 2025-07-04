@@ -1,4 +1,9 @@
-import { SessionDescriptionHandler as SDHInterface, SessionDescriptionHandlerOptions, SessionDescriptionHandlerModifier, BodyAndContentType } from 'sip.js/lib/api';
+import { 
+  SessionDescriptionHandler as SDHInterface, 
+  SessionDescriptionHandlerOptions, 
+  SessionDescriptionHandlerModifier, 
+  BodyAndContentType,
+} from 'sip.js/lib/api';
 import { Logger } from 'sip.js/lib/core';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
@@ -18,6 +23,11 @@ export interface WorkerSessionDescriptionHandlerOptions extends SessionDescripti
    * Action hiện tại (offer hoặc answer) để biết đường request SDP
    */
   action?: 'offer' | 'answer';
+  
+  /**
+   * Hold state để xử lý hold/unhold
+   */
+  hold?: boolean;
 }
 
 /**
@@ -33,6 +43,7 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
   private isClosed: boolean = false;
   private isEarlyMedia: boolean = false;
   private selectedTabId?: string;
+  private cachedOriginalSdp?: { local: string; remote: string };
 
   constructor(
     logger: Logger,
@@ -53,8 +64,6 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     this.logger.debug(`WorkerSessionDescriptionHandler created with callId: ${this.callId}`);
   }
 
-
-
   /**
    * Close this handler and cleanup resources
    */
@@ -64,23 +73,112 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
   }
 
   /**
-   * Get description (offer/answer) from the selected tab
+   * Get description (offer/answer) from the selected tab with hold support
    */
   public async getDescription(
     options?: WorkerSessionDescriptionHandlerOptions,
     modifiers?: Array<SessionDescriptionHandlerModifier>
   ): Promise<BodyAndContentType> {
-    this.logger.debug('WorkerSessionDescriptionHandler.getDescription');
-    
-    // TODO: Implement serialization and handling of SessionDescriptionHandlerOptions and SessionDescriptionHandlerModifiers
-    // Need to serialize options/modifiers and send them to tab for proper SDP manipulation
-    // Currently ignoring options and modifiers for simplicity
+    this.logger.debug(`WorkerSessionDescriptionHandler.getDescription for call: ${this.callId}`);
     
     if (this.isClosed) {
       throw new Error('SessionDescriptionHandler is closed');
     }
+    
+    // Check if this is a hold/unhold request
+    const isHoldRequest = options?.hold === true;
+    const currentCallInfo = this.workerState?.getActiveCall(this.callId);
+    const isUnholdRequest = options?.hold === false && this.cachedOriginalSdp && currentCallInfo?.isOnHold;
 
-    // Get the best tab to handle media (use cached tab for consistency)
+    this.logger.debug(`Hold/Unhold check: hold=${options?.hold}, cachedSdp=${!!this.cachedOriginalSdp}, currentCallInfo.isOnHold=${currentCallInfo?.isOnHold}, isHoldRequest=${isHoldRequest}, isUnholdRequest=${isUnholdRequest}`);
+
+    if (isUnholdRequest && currentCallInfo?.originalSdp?.local) {
+      // UNHOLD: Use cached original local SDP (replace sendrecv)
+      this.logger.debug(`Using cached original SDP for unhold: ${this.callId}`);
+      let sdpContent = currentCallInfo.originalSdp.local;
+      
+      // Replace any "inactive" or "sendonly" with "sendrecv" to restore media flow
+      sdpContent = sdpContent.replace(/a=(inactive|sendonly)/g, 'a=sendrecv');
+      
+      return {
+        body: sdpContent,
+        contentType: 'application/sdp'
+      };
+    }
+
+    if (isHoldRequest && this.cachedOriginalSdp) {
+      // HOLD: Use cached original local SDP and modify to sendonly
+      this.logger.debug(`Using cached original SDP for hold: ${this.callId}`);
+      let sdpContent = this.cachedOriginalSdp.local;
+      
+      // Replace sendrecv with sendonly to place remote on hold
+      sdpContent = sdpContent.replace(/a=sendrecv/g, 'a=sendonly');
+      
+      return {
+        body: sdpContent,
+        contentType: 'application/sdp'
+      };
+    }
+
+    // NORMAL flow: Request SDP from client
+    const selectedTab = await this.getSelectedTab();
+    
+    this.logger.debug(`Requesting SDP from tab: ${selectedTab.id} (hold: ${isHoldRequest}, callId: ${this.callId})`);
+
+    // Determine if we need offer or answer based on SIP.js session context
+    let requestType: 'offer' | 'answer' = 'offer'; // Default to offer
+    
+    if (this.session) {
+      // Check if this is an incoming call (Invitation) that needs an answer
+      const sessionConstructorName = this.session.constructor.name;
+      if (sessionConstructorName === 'Invitation') {
+        requestType = 'answer';
+        this.logger.debug(`Detected Invitation session, requesting answer`);
+      } else {
+        this.logger.debug(`Detected ${sessionConstructorName} session, requesting offer`);
+      }
+    }
+    
+    // Send media request to tab with hold flag
+    const mediaRequest: SipWorker.MediaRequest = {
+      callId: this.callId,
+      type: requestType,
+      constraints: {
+        audio: true,
+        video: false
+      }
+    };
+
+    const messageType = requestType === 'offer' ? 
+      SipWorker.MessageType.MEDIA_GET_OFFER : 
+      SipWorker.MessageType.MEDIA_GET_ANSWER;
+
+    const request: SipWorker.Message<SipWorker.MediaRequest> = {
+      type: messageType,
+      id: `media-${requestType}-${Date.now()}`,
+      timestamp: Date.now(),
+      data: mediaRequest
+    };
+
+    const response = await this.requestSdpFromTab(selectedTab, request, requestType);
+    let sdpContent = response.data?.sdp;
+
+    if (!sdpContent) {
+      throw new Error(`No SDP received from tab for ${requestType}`);
+    }
+
+    this.logger.debug(`Returning SDP ${requestType} for call: ${this.callId}`);
+
+    return {
+      body: sdpContent,
+      contentType: 'application/sdp'
+    };
+  }
+
+  /**
+   * Get selected tab for media handling
+   */
+  private async getSelectedTab(): Promise<any> {
     let selectedTab;
     if (this.selectedTabId) {
       selectedTab = this.tabManager.getTab(this.selectedTabId);
@@ -102,58 +200,19 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
             ...existingCallInfo,
             handlingTabId: selectedTab.id
           });
-          
-          // Verify it was set
-          const updatedCallInfo = this.workerState.getActiveCall(this.callId);
-          console.log(`WorkerSDH: Verified handlingTabId for ${this.callId}:`, updatedCallInfo?.handlingTabId);
-        } else {
-          console.warn(`WorkerSDH: No existing call info found for callId ${this.callId} when trying to set handlingTabId`);
         }
       }
     }
-
-    this.logger.debug(`Requesting SDP offer from tab: ${selectedTab.id} (early media: ${this.isEarlyMedia}, callId: ${this.callId})`);
-
-    // Determine if we need offer or answer based on SIP.js session context
-    let requestType: 'offer' | 'answer' = 'offer'; // Default to offer
     
-    if (this.session) {
-      // Check if this is an incoming call (Invitation) that needs an answer
-      // In SIP.js, Invitation.accept() calls getDescription() to create an answer
-      const sessionConstructorName = this.session.constructor.name;
-      if (sessionConstructorName === 'Invitation') {
-        requestType = 'answer';
-        this.logger.debug(`Detected Invitation session, requesting answer`);
-      } else {
-        this.logger.debug(`Detected ${sessionConstructorName} session, requesting offer`);
-      }
-    }
-    
-    // Send media request to tab
-    const mediaRequest: SipWorker.MediaRequest = {
-      callId: this.callId,
-      type: requestType,
-      constraints: {
-        audio: true,
-        video: false
-      }
-    };
+    return selectedTab;
+  }
 
-    const messageType = requestType === 'offer' ? 
-      SipWorker.MessageType.MEDIA_GET_OFFER : 
-      SipWorker.MessageType.MEDIA_GET_ANSWER;
-
-    const request: SipWorker.Message<SipWorker.MediaRequest> = {
-      type: messageType,
-      id: `media-${requestType}-${Date.now()}`,
-      timestamp: Date.now(),
-      data: mediaRequest
-    };
-
+  /**
+   * Request SDP from tab with retry logic
+   */
+  private async requestSdpFromTab(selectedTab: any, request: any, requestType: string): Promise<any> {
     try {
-      // Increase timeout for answer requests (they might need more time)
       const timeout = requestType === 'answer' ? 15000 : 10000;
-      
       this.logger.debug(`Requesting ${requestType} from tab ${selectedTab.id} with ${timeout}ms timeout`);
       
       const response = await this.messageBroker.request(selectedTab.id, request, timeout);
@@ -162,17 +221,7 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
         throw new Error(`Failed to get ${requestType}: ${response.error.message}`);
       }
 
-      const sdp = response.data?.sdp;
-      if (!sdp) {
-        throw new Error(`No SDP received from tab for ${requestType}`);
-      }
-
-      this.logger.debug(`Received SDP ${requestType} from tab: ${sdp.substring(0, 100)}...`);
-
-      return {
-        body: sdp,
-        contentType: 'application/sdp'
-      };
+      return response;
     } catch (error) {
       this.logger.error(`Failed to get ${requestType} description: ${error}`);
       
@@ -192,10 +241,7 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
           
           if (fallbackResponse.data?.sdp) {
             this.logger.debug(`Fallback tab succeeded for ${requestType}`);
-            return {
-              body: fallbackResponse.data.sdp,
-              contentType: 'application/sdp'
-            };
+            return fallbackResponse;
           }
         }
       }
@@ -301,6 +347,26 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       }
 
       this.logger.debug(`Remote SDP set successfully on tab: ${selectedTab.id}`);
+      
+      // Cache remote SDP for hold/unhold functionality
+      if (this.workerState) {
+        const callInfo = this.workerState.getActiveCall(this.callId);
+        if (callInfo) {
+          // Initialize or update SDP cache
+          if (!this.cachedOriginalSdp) {
+            this.cachedOriginalSdp = { local: '', remote: sdp };
+          } else {
+            this.cachedOriginalSdp.remote = sdp;
+          }
+          
+          this.workerState.setActiveCall(this.callId, {
+            ...callInfo,
+            originalSdp: this.cachedOriginalSdp
+          });
+          
+          this.logger.debug(`Cached remote SDP for call: ${this.callId}`);
+        }
+      }
     } catch (error) {
       this.logger.error(`Failed to set remote description: ${error}`);
       throw error;
