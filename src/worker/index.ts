@@ -272,7 +272,7 @@ function registerMessageHandlers() {
           
           // Verify it was cached
           const updatedCallInfo = workerState.getActiveCall(data.callId);
-          console.log('Verified SDP cache:', data.callId, !!updatedCallInfo?.originalSdp);
+          console.log('Verified SDP cache:', data.callId, updatedCallInfo);
           
           return { success: true };
         } else {

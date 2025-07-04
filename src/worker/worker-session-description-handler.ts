@@ -43,7 +43,6 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
   private isClosed: boolean = false;
   private isEarlyMedia: boolean = false;
   private selectedTabId?: string;
-  private cachedOriginalSdp?: { local: string; remote: string };
 
   constructor(
     logger: Logger,
@@ -88,9 +87,9 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     // Check if this is a hold/unhold request
     const isHoldRequest = options?.hold === true;
     const currentCallInfo = this.workerState?.getActiveCall(this.callId);
-    const isUnholdRequest = options?.hold === false && this.cachedOriginalSdp && currentCallInfo?.isOnHold;
+    const isUnholdRequest = options?.hold === false && currentCallInfo?.isOnHold;
 
-    this.logger.debug(`Hold/Unhold check: hold=${options?.hold}, cachedSdp=${!!this.cachedOriginalSdp}, currentCallInfo.isOnHold=${currentCallInfo?.isOnHold}, isHoldRequest=${isHoldRequest}, isUnholdRequest=${isUnholdRequest}`);
+    this.logger.debug(`Hold/Unhold check: hold=${options?.hold}, currentCallInfo.isOnHold=${currentCallInfo?.isOnHold}, isHoldRequest=${isHoldRequest}, isUnholdRequest=${isUnholdRequest}`);
 
     if (isUnholdRequest && currentCallInfo?.originalSdp?.local) {
       // UNHOLD: Use cached original local SDP (replace sendrecv)
@@ -106,16 +105,11 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       };
     }
 
-    if (isHoldRequest && this.cachedOriginalSdp) {
+    if (isHoldRequest && currentCallInfo?.originalSdp?.local) {
       // HOLD: Use cached original local SDP and modify to sendonly
       this.logger.debug(`Using cached original SDP for hold: ${this.callId}`);
-      let sdpContent = this.cachedOriginalSdp.local;
-      
-      // Replace sendrecv with sendonly to place remote on hold
-      sdpContent = sdpContent.replace(/a=sendrecv/g, 'a=sendonly');
-      
       return {
-        body: sdpContent,
+        body: currentCallInfo.originalSdp.local.replace(/a=sendrecv/g, 'a=sendonly'),
         contentType: 'application/sdp'
       };
     }
@@ -195,11 +189,12 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       if (this.workerState) {
         const existingCallInfo = this.workerState.getActiveCall(this.callId);
         if (existingCallInfo) {
-          console.log(`WorkerSDH: Setting handlingTabId ${selectedTab.id} for callId ${this.callId}`);
           this.workerState.setActiveCall(this.callId, {
             ...existingCallInfo,
             handlingTabId: selectedTab.id
           });
+
+          console.log('WorkerSDH.getSelectedTab: Existing call info:', existingCallInfo);
         }
       }
     }
@@ -317,6 +312,8 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
             ...existingCallInfo,
             handlingTabId: selectedTab.id
           });
+
+          console.log('WorkerSDH.setDescription: Existing call info:', existingCallInfo);
         } else {
           console.warn(`WorkerSDH.setDescription: No existing call info found for callId ${this.callId} when trying to set handlingTabId`);
         }
@@ -351,20 +348,15 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       // Cache remote SDP for hold/unhold functionality
       if (this.workerState) {
         const callInfo = this.workerState.getActiveCall(this.callId);
-        if (callInfo) {
-          // Initialize or update SDP cache
-          if (!this.cachedOriginalSdp) {
-            this.cachedOriginalSdp = { local: '', remote: sdp };
-          } else {
-            this.cachedOriginalSdp.remote = sdp;
-          }
-          
+        if (callInfo) {  
           this.workerState.setActiveCall(this.callId, {
             ...callInfo,
-            originalSdp: this.cachedOriginalSdp
+            originalSdp: {
+              local: callInfo.originalSdp?.local ?? '',
+              remote: callInfo.originalSdp?.remote ?? sdp
+            }
           });
-          
-          this.logger.debug(`Cached remote SDP for call: ${this.callId}`);
+          console.log('WorkerSDH.setDescription: Cached remote SDP:', this.callId, callInfo);
         }
       }
     } catch (error) {
