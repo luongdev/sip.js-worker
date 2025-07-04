@@ -741,9 +741,9 @@ export namespace SipWorker {
    */
   export interface MediaRequest {
     /**
-     * ID của session SIP
+     * ID của cuộc gọi
      */
-    sessionId: string;
+    callId: string;
 
     /**
      * Loại yêu cầu
@@ -771,9 +771,9 @@ export namespace SipWorker {
    */
   export interface MediaResponse {
     /**
-     * ID của session SIP
+     * ID của cuộc gọi
      */
-    sessionId: string;
+    callId: string;
 
     /**
      * Có thành công không
