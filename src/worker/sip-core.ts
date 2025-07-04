@@ -5,7 +5,7 @@
 import { SipWorker } from '../common/types';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
-import { createWorkerSessionDescriptionHandlerFactory } from './worker-session-description-handler';
+import { createWorkerSessionDescriptionHandlerFactory, WorkerSessionDescriptionHandlerOptions } from './worker-session-description-handler';
 import { 
   UserAgent, 
   UserAgentOptions, 
@@ -542,7 +542,6 @@ export class SipCore {
       if (inviter.outgoingRequestMessage) {
         // @ts-ignore - Override Call-ID
         inviter.outgoingRequestMessage.callId = callId;
-        // @ts-ignore - Update header map
         // @ts-ignore - Update session ID
         inviter._id = callId + inviter.fromTag;
       }
@@ -1317,18 +1316,143 @@ export class SipCore {
 
       this.log('info', `Sending DTMF tones: ${tones} for call: ${callId}`);
 
-      // Gửi DTMF qua session
-      const result = session.sessionDescriptionHandler?.sendDtmf(tones, options);
+      // Hybrid approach: Try WebRTC first, fallback to SIP INFO
+      const webrtcTimeout = options?.webrtcTimeout || 2000; // 2 seconds timeout
       
-      if (result) {
-        this.log('info', `DTMF sent successfully: ${tones}`);
-        return { success: true };
-      } else {
-        return { success: false, error: 'Failed to send DTMF' };
+      try {
+        // Method 1: Try WebRTC DTMF (preferred for better compatibility and real-time)
+        const result = await this.sendDtmfViaWebRTC(callId, tones, options, webrtcTimeout);
+        if (result.success) {
+          this.log('info', `DTMF sent successfully via WebRTC: ${tones}`);
+          return result;
+        }
+        
+        // If WebRTC failed, log and continue to fallback
+        this.log('warn', `WebRTC DTMF failed: ${result.error}, falling back to SIP INFO`);
+      } catch (error: any) {
+        // If WebRTC timeout or error, log and continue to fallback
+        this.log('warn', `WebRTC DTMF timeout/error: ${error.message}, falling back to SIP INFO`);
       }
+
+      // Method 2: Fallback to SIP INFO messages (in-band)
+      await session.info({
+        requestOptions: {
+          body: {
+            contentDisposition: "render",
+            contentType: "application/dtmf-relay",
+            content: `Signal=${tones}\r\nDuration=${options?.duration || 100}`
+          }
+        }
+      });
+      
+      this.log('info', `DTMF sent successfully via SIP INFO (fallback): ${tones}`);
+      return { success: true };
     } catch (error: any) {
       this.log('error', `Failed to send DTMF: ${error.message}`);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Gửi DTMF qua WebRTC (RFC 4733) với timeout
+   * @param callId ID của cuộc gọi  
+   * @param tones DTMF tones
+   * @param options Tùy chọn DTMF
+   * @param timeout Timeout in milliseconds
+   * @returns Promise với kết quả
+   */
+  private async sendDtmfViaWebRTC(
+    callId: string, 
+    tones: string, 
+    options?: any,
+    timeout: number = 2000
+  ): Promise<{ success: boolean; error?: string }> {
+    
+    // Get call info to find the handling tab
+    const currentCallInfo = this.workerState?.getActiveCall(callId);
+    let handlingTabId = currentCallInfo?.handlingTabId;
+
+    // If no handlingTabId, try to find any available tab
+    if (!handlingTabId) {
+      const availableTabIds = this.messageBroker.getTabIds();
+      
+      if (availableTabIds.length > 0) {
+        handlingTabId = availableTabIds[0]; // Use first available tab
+        this.log('info', `No handlingTabId found, using first available tab: ${handlingTabId}`);
+      } else {
+        return { success: false, error: 'No handling tab found for WebRTC DTMF' };
+      }
+    }
+
+    // Check if tab still exists
+    if (!this.messageBroker.hasTab(handlingTabId)) {
+      return { success: false, error: 'Handling tab no longer connected' };
+    }
+
+    // Create DTMF request for WebRTC
+    const dtmfRequest: SipWorker.DtmfRequest = {
+      callId: callId,
+      tones: tones,
+      duration: options?.duration || 100,
+      interToneGap: options?.interToneGap || 100
+    };
+
+    const request: SipWorker.Message<SipWorker.DtmfRequest> = {
+      type: SipWorker.MessageType.DTMF_REQUEST_WEBRTC,
+      id: `dtmf-webrtc-${Date.now()}`,
+      timestamp: Date.now(),
+      data: dtmfRequest
+    };
+
+    try {
+      this.log('info', `Sending WebRTC DTMF to tab: ${handlingTabId}`);
+      
+      // Send DTMF message to tab (not a request/response pattern)
+      // Tab will handle it and send back DTMF_SENT or DTMF_FAILED message
+      await this.messageBroker.sendToTab(handlingTabId, request);
+      
+      // Wait for DTMF response with timeout
+      return new Promise<{ success: boolean; error?: string }>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          if (!isResolved) {
+            cleanup();
+            reject(new Error(`WebRTC DTMF timeout after ${timeout}ms`));
+          }
+        }, timeout);
+
+        let isResolved = false;
+        
+        const cleanup = () => {
+          if (!isResolved) {
+            clearTimeout(timeoutId);
+            dtmfSentUnsubscribe();
+            dtmfFailedUnsubscribe();
+            isResolved = true;
+          }
+        };
+
+        const dtmfSentUnsubscribe = this.messageBroker.on(SipWorker.MessageType.DTMF_SENT, async (message) => {
+          const response = message.data as SipWorker.DtmfResponse;
+          // Match both callId and request ID to prevent race conditions between multiple DTMF requests
+          // Client sends response with ID pattern: "dtmf-response-{originalRequestId}"
+          if (response && response.callId === callId && message.id.includes(request.id) && !isResolved) {
+            cleanup();
+            resolve({ success: true });
+          }
+        });
+
+        const dtmfFailedUnsubscribe = this.messageBroker.on(SipWorker.MessageType.DTMF_FAILED, async (message) => {
+          const response = message.data as SipWorker.DtmfResponse;
+          // Match both callId and request ID to prevent race conditions between multiple DTMF requests  
+          // Client sends response with ID pattern: "dtmf-response-{originalRequestId}"
+          if (response && response.callId === callId && message.id.includes(request.id) && !isResolved) {
+            cleanup();
+            resolve({ success: false, error: response.error || 'WebRTC DTMF failed' });
+          }
+        });
+      });
+    } catch (error: any) {
+      return { success: false, error: `WebRTC DTMF error: ${error.message}` };
     }
   }
 

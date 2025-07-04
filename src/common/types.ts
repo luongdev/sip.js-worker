@@ -61,10 +61,11 @@ export namespace SipWorker {
     STATE_SYNC = 'state_sync',               // Worker gửi trạng thái hiện tại
     STATE_CHANGED = 'state_changed',         // Worker thông báo trạng thái đã thay đổi
 
-    // DTMF
-    DTMF_SEND = 'dtmf_send',                 // Gửi DTMF tones
-    DTMF_SENT = 'dtmf_sent',                 // DTMF đã được gửi thành công
-    DTMF_FAILED = 'dtmf_failed',             // DTMF gửi thất bại
+      // DTMF
+  DTMF_SEND = 'dtmf_send',                 // Client request DTMF tones to worker
+  DTMF_REQUEST_WEBRTC = 'dtmf_request_webrtc', // Worker request WebRTC DTMF to client  
+  DTMF_SENT = 'dtmf_sent',                 // DTMF đã được gửi thành công
+  DTMF_FAILED = 'dtmf_failed',             // DTMF gửi thất bại
 
     // Call Control
     CALL_MUTE = 'call_mute',                 // Tắt tiếng cuộc gọi
@@ -741,9 +742,9 @@ export namespace SipWorker {
    */
   export interface MediaRequest {
     /**
-     * ID của session SIP
+     * ID của cuộc gọi
      */
-    sessionId: string;
+    callId: string;
 
     /**
      * Loại yêu cầu
@@ -771,9 +772,9 @@ export namespace SipWorker {
    */
   export interface MediaResponse {
     /**
-     * ID của session SIP
+     * ID của cuộc gọi
      */
-    sessionId: string;
+    callId: string;
 
     /**
      * Có thành công không

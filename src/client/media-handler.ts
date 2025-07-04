@@ -4,10 +4,10 @@ import { SipWorker } from '../common/types';
  * Callback interface để gửi tin nhắn về worker
  */
 export interface MediaHandlerCallbacks {
-  sendIceCandidate: (sessionId: string, candidate: RTCIceCandidate) => void;
-  sendSessionReady: (sessionId: string) => void;
-  sendSessionFailed: (sessionId: string, error: string) => void;
-  handleRemoteStream: (sessionId: string, stream: MediaStream) => void;
+  sendIceCandidate: (callId: string, candidate: RTCIceCandidate) => void;
+  sendSessionReady: (callId: string) => void;
+  sendSessionFailed: (callId: string, error: string) => void;
+  handleRemoteStream: (callId: string, stream: MediaStream) => void;
 }
 
 /**
@@ -99,7 +99,7 @@ export class MediaHandler {
    * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
   public async handleMediaRequest(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    console.log('Handling media request:', request.type, 'for session:', request.sessionId);
+    console.log('Handling media request:', request.type, 'for call:', request.callId);
 
     try {
       switch (request.type) {
@@ -116,9 +116,9 @@ export class MediaHandler {
       }
     } catch (error: any) {
       console.error('Media request failed:', error);
-      this.sendSessionFailedToWorker(request.sessionId, error.message);
+      this.sendSessionFailedToWorker(request.callId, error.message);
       return {
-        sessionId: request.sessionId,
+        callId: request.callId,
         success: false,
         error: error.message || 'Unknown media error'
       };
@@ -129,31 +129,52 @@ export class MediaHandler {
    * Handle DTMF request from worker
    */
   public async handleDtmfRequest(request: SipWorker.DtmfRequest): Promise<SipWorker.DtmfResponse> {
-    console.log('Handling DTMF request:', request.tones, 'for call:', request.callId);
+    console.log('Handling WebRTC DTMF request - tones:', request?.tones, 'callId:', request?.callId);
 
     try {
-      const sessionState = this.sessions.get(request.callId);
-      if (!sessionState) {
-        throw new Error('Session not found');
+      // Validate request
+      if (!request || typeof request !== 'object' || !request.callId || !request.tones) {
+        console.error('Invalid DTMF request:', request);
+        throw new Error('Invalid DTMF request: missing callId or tones');
+      }
+      if (!request.tones) {
+        throw new Error('No tones provided in DTMF request');
       }
 
+      const sessionState = this.sessions.get(request.callId);
+      if (!sessionState) {
+        console.log('Available sessions:', Array.from(this.sessions.keys()));
+        throw new Error(`Session not found for callId: ${request.callId}`);
+      }
+
+      console.log('Session found, peerConnection state:', sessionState.peerConnection.connectionState);
+      console.log('Session signaling state:', sessionState.peerConnection.signalingState);
+
       // Get DTMF sender from the first audio track
-      const sender = sessionState.peerConnection.getSenders().find(s => 
-        s.track && s.track.kind === 'audio'
-      );
+      const senders = sessionState.peerConnection.getSenders();
+      console.log('Available senders:', senders.length);
+      
+      const sender = senders.find(s => {
+        console.log('Sender track:', s.track?.kind, s.track?.id);
+        return s.track && s.track.kind === 'audio';
+      });
 
       if (!sender) {
         throw new Error('No audio sender found for DTMF');
       }
 
+      console.log('Audio sender found:', sender);
+      console.log('DTMF capabilities:', sender.dtmf ? 'supported' : 'not supported');
+
       if (!sender.dtmf) {
-        throw new Error('DTMF not supported');
+        throw new Error('DTMF not supported by this sender');
       }
 
       // Send DTMF tones
       const duration = request.duration || 100;
       const interToneGap = request.interToneGap || 100;
       
+      console.log(`Sending DTMF: "${request.tones}" with duration: ${duration}ms, gap: ${interToneGap}ms`);
       sender.dtmf.insertDTMF(request.tones, duration, interToneGap);
 
       console.log('DTMF sent successfully:', request.tones);
@@ -165,6 +186,12 @@ export class MediaHandler {
       };
     } catch (error: any) {
       console.error('DTMF request failed:', error);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      
       return {
         callId: request.callId,
         success: false,
@@ -175,20 +202,15 @@ export class MediaHandler {
   }
 
   /**
-   * Mute audio tracks for a session (now callId = sessionId thanks to our hack)
+   * Mute audio tracks for a call
    */
   public async muteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
     console.log('Muting audio for call/session:', callId);
-    console.log('Available sessions:', Array.from(this.sessions.keys()));
 
     try {
-      // Now callId should be the same as sessionId thanks to our hack
       const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
-        // This tab doesn't have this session - this is normal when forwarding to specific tab
-        console.log('Session not found for callId:', callId, '- this tab does not own this session');
-        console.log('Available sessions:', Array.from(this.sessions.keys()));
-        return { success: false, error: 'Session not found in this tab' };
+        throw new Error('Session or local stream not found');
       }
 
       // Disable all audio tracks
@@ -206,19 +228,15 @@ export class MediaHandler {
   }
 
   /**
-   * Unmute audio tracks for a session (now callId = sessionId thanks to our hack)
+   * Unmute audio tracks for a call
    */
   public async unmuteAudio(callId: string): Promise<{ success: boolean; error?: string }> {
     console.log('Unmuting audio for call/session:', callId);
 
     try {
-      // Now callId should be the same as sessionId thanks to our hack
       const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
-        // This tab doesn't have this session - this is normal when forwarding to specific tab
-        console.log('Session not found for callId:', callId, '- this tab does not own this session');
-        console.log('Available sessions:', Array.from(this.sessions.keys()));
-        return { success: false, error: 'Session not found in this tab' };
+        throw new Error('Session or local stream not found');
       }
 
       // Enable all audio tracks
@@ -236,13 +254,13 @@ export class MediaHandler {
   }
 
   /**
-   * Mute video tracks for a session
+   * Mute video tracks for a call
    */
-  public async muteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
-    console.log('Muting video for session:', sessionId);
+  public async muteVideo(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Muting video for call:', callId);
 
     try {
-      const sessionState = this.sessions.get(sessionId);
+      const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
         throw new Error('Session or local stream not found');
       }
@@ -253,7 +271,7 @@ export class MediaHandler {
         console.log('Video track muted:', track.id);
       });
 
-      console.log('Video muted successfully for session:', sessionId);
+      console.log('Video muted successfully for call:', callId);
       return { success: true };
     } catch (error: any) {
       console.error('Failed to mute video:', error);
@@ -262,13 +280,13 @@ export class MediaHandler {
   }
 
   /**
-   * Unmute video tracks for a session
+   * Unmute video tracks for a call
    */
-  public async unmuteVideo(sessionId: string): Promise<{ success: boolean; error?: string }> {
-    console.log('Unmuting video for session:', sessionId);
+  public async unmuteVideo(callId: string): Promise<{ success: boolean; error?: string }> {
+    console.log('Unmuting video for call:', callId);
 
     try {
-      const sessionState = this.sessions.get(sessionId);
+      const sessionState = this.sessions.get(callId);
       if (!sessionState || !sessionState.localStream) {
         throw new Error('Session or local stream not found');
       }
@@ -279,7 +297,7 @@ export class MediaHandler {
         console.log('Video track unmuted:', track.id);
       });
 
-      console.log('Video unmuted successfully for session:', sessionId);
+      console.log('Video unmuted successfully for call:', callId);
       return { success: true };
     } catch (error: any) {
       console.error('Failed to unmute video:', error);
@@ -291,12 +309,12 @@ export class MediaHandler {
    * Create offer description - inspired by SIP.js getDescription() for offers
    */
   private async createOfferDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    const { sessionId, constraints } = request;
+    const { callId, constraints } = request;
 
     // Create or get session state
-    let sessionState = this.sessions.get(sessionId);
+    let sessionState = this.sessions.get(callId);
     if (!sessionState) {
-      sessionState = await this.createSession(sessionId);
+      sessionState = await this.createSession(callId);
     }
 
     // Get local media stream (similar to SIP.js getLocalMediaStream)
@@ -319,10 +337,10 @@ export class MediaHandler {
 
     sessionState.localDescription = finalDescription;
 
-    console.log('Created offer description for session:', sessionId);
+    console.log('Created offer description for call:', callId);
 
     return {
-      sessionId,
+      callId,
       success: true,
       sdp: finalDescription.sdp
     };
@@ -332,13 +350,13 @@ export class MediaHandler {
    * Create answer description - inspired by SIP.js getDescription() for answers
    */
   private async createAnswerDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    const { sessionId, constraints } = request;
+    const { callId, constraints } = request;
 
-    let sessionState = this.sessions.get(sessionId);
+    let sessionState = this.sessions.get(callId);
     if (!sessionState) {
       // For incoming calls, session might not exist yet - create it
-      console.log('Creating new session for answer request:', sessionId);
-      sessionState = await this.createSession(sessionId);
+      console.log('Creating new call session for answer request:', callId);
+      sessionState = await this.createSession(callId);
     }
 
     // Check if we have remote description, if not wait a bit
@@ -357,7 +375,7 @@ export class MediaHandler {
       }
     }
 
-    console.log('Creating answer for session:', sessionId, 'signaling state:', sessionState.peerConnection.signalingState);
+    console.log('Creating answer for call:', callId, 'signaling state:', sessionState.peerConnection.signalingState);
 
     // Get local media stream
     await this.getLocalMediaStream(sessionState, constraints);
@@ -379,10 +397,10 @@ export class MediaHandler {
 
     sessionState.localDescription = finalDescription;
 
-    console.log('Created answer description for session:', sessionId);
+    console.log('Created answer description for call:', callId);
 
     return {
-      sessionId,
+      callId,
       success: true,
       sdp: finalDescription.sdp
     };
@@ -392,16 +410,16 @@ export class MediaHandler {
    * Set remote description - inspired by SIP.js setDescription()
    */
   private async setRemoteDescription(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    const { sessionId, sdp } = request;
+    const { callId, sdp } = request;
 
     if (!sdp) {
       throw new Error('SDP is required for set-remote-sdp request');
     }
 
-    let sessionState = this.sessions.get(sessionId);
+    let sessionState = this.sessions.get(callId);
     if (!sessionState) {
       // Create session for incoming call
-      sessionState = await this.createSession(sessionId);
+      sessionState = await this.createSession(callId);
     }
 
     // Determine SDP type based on current signaling state (like SIP.js)
@@ -430,48 +448,48 @@ export class MediaHandler {
     // Process queued ICE candidates
     await this.processQueuedIceCandidates(sessionState);
 
-    console.log('Set remote description for session:', sessionId, 'type:', type);
+    console.log('Set remote description for call:', callId, 'type:', type);
 
     return {
-      sessionId,
+      callId,
       success: true
     };
   }
 
   /**
-   * Add ICE candidate
+   * Add ICE candidate - inspired by SIP.js ice candidate handling
    */
   private async addIceCandidate(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    const { sessionId, candidate } = request;
+    const { callId, candidate } = request;
 
     if (!candidate) {
       throw new Error('ICE candidate is required');
     }
 
-    const sessionState = this.sessions.get(sessionId);
+    const sessionState = this.sessions.get(callId);
     if (!sessionState) {
-      throw new Error(`No session found for sessionId: ${sessionId}`);
+      throw new Error(`No session found for callId: ${callId}`);
     }
 
     const pc = sessionState.peerConnection;
     
-    // Check if we can add the candidate now or need to queue it
-    if (pc.remoteDescription) {
+    // Check if we can add the candidate immediately
+    if (sessionState.remoteDescription) {
       try {
         await pc.addIceCandidate(candidate);
-        console.log('Added ICE candidate for session:', sessionId);
+        console.log('Added ICE candidate for call:', callId);
       } catch (error) {
         console.warn('Failed to add ICE candidate:', error);
-        // Non-fatal error, continue
+        throw error;
       }
     } else {
       // Queue candidate for later processing
       sessionState.iceCandidatesQueue.push(candidate);
-      console.log('Queued ICE candidate for session:', sessionId);
+      console.log('Queued ICE candidate for call:', callId);
     }
 
     return {
-      sessionId,
+      callId,
       success: true
     };
   }
@@ -479,8 +497,8 @@ export class MediaHandler {
   /**
    * Create a new session state - like SIP.js constructor
    */
-  private async createSession(sessionId: string): Promise<SessionState> {
-    console.log('Creating new session:', sessionId);
+  private async createSession(callId: string): Promise<SessionState> {
+    console.log('Creating new call session:', callId);
 
     const peerConnection = new RTCPeerConnection(this.configuration.peerConnectionConfiguration);
     
@@ -491,26 +509,26 @@ export class MediaHandler {
     };
 
     // Set up event handlers (inspired by SIP.js initPeerConnectionEventHandlers)
-    this.initPeerConnectionEventHandlers(sessionState, sessionId);
+    this.initPeerConnectionEventHandlers(sessionState, callId);
 
-    this.sessions.set(sessionId, sessionState);
+    this.sessions.set(callId, sessionState);
     return sessionState;
   }
 
   /**
    * Initialize PeerConnection event handlers - inspired by SIP.js
    */
-  private initPeerConnectionEventHandlers(sessionState: SessionState, sessionId: string): void {
+  private initPeerConnectionEventHandlers(sessionState: SessionState, callId: string): void {
     const pc = sessionState.peerConnection;
 
     // ICE candidate handler
     pc.addEventListener('icecandidate', (event) => {
       if (event.candidate) {
         console.log('ICE candidate generated:', event.candidate.candidate);
-        this.sendIceCandidateToWorker(sessionId, event.candidate);
+        this.sendIceCandidateToWorker(callId, event.candidate);
       } else {
         // ICE gathering complete
-        console.log('ICE gathering complete for session:', sessionId);
+        console.log('ICE gathering complete for call:', callId);
         sessionState.iceGatheringComplete = true;
         
         // Clear timeout
@@ -527,33 +545,33 @@ export class MediaHandler {
 
     // ICE gathering state change
     pc.addEventListener('icegatheringstatechange', () => {
-      console.log(`ICE gathering state changed to: ${pc.iceGatheringState} for session: ${sessionId}`);
+      console.log(`ICE gathering state changed to: ${pc.iceGatheringState} for call: ${callId}`);
     });
 
     // ICE connection state change
     pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('ICE connection state:', pc.iceConnectionState, 'for session:', sessionId);
+      console.log('ICE connection state:', pc.iceConnectionState, 'for call:', callId);
       
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-        this.sendSessionReadyToWorker(sessionId);
+        this.sendSessionReadyToWorker(callId);
       } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
-        this.sendSessionFailedToWorker(sessionId, `ICE connection failed: ${pc.iceConnectionState}`);
+        this.sendSessionFailedToWorker(callId, `ICE connection failed: ${pc.iceConnectionState}`);
       }
     });
 
     // Remote stream handler
     pc.addEventListener('track', (event) => {
-      console.log('Received remote track for session:', sessionId);
+      console.log('Received remote track for call:', callId);
       const [remoteStream] = event.streams;
       if (remoteStream) {
         sessionState.remoteStream = remoteStream;
-        this.handleRemoteStream(sessionId, remoteStream);
+        this.handleRemoteStream(callId, remoteStream);
       }
     });
 
     // Connection state change
     pc.addEventListener('connectionstatechange', () => {
-      console.log('Connection state:', pc.connectionState, 'for session:', sessionId);
+      console.log('Connection state:', pc.connectionState, 'for call:', callId);
     });
   }
 
@@ -685,49 +703,49 @@ export class MediaHandler {
   /**
    * Send ICE candidate to worker
    */
-  private sendIceCandidateToWorker(sessionId: string, candidate: RTCIceCandidate): void {
+  private sendIceCandidateToWorker(callId: string, candidate: RTCIceCandidate): void {
     if (this.callbacks?.sendIceCandidate) {
-      this.callbacks.sendIceCandidate(sessionId, candidate);
+      this.callbacks.sendIceCandidate(callId, candidate);
     }
   }
 
   /**
    * Send session ready to worker
    */
-  private sendSessionReadyToWorker(sessionId: string): void {
+  private sendSessionReadyToWorker(callId: string): void {
     if (this.callbacks?.sendSessionReady) {
-      this.callbacks.sendSessionReady(sessionId);
+      this.callbacks.sendSessionReady(callId);
     }
   }
 
   /**
    * Send session failed to worker
    */
-  private sendSessionFailedToWorker(sessionId: string, error: string): void {
+  private sendSessionFailedToWorker(callId: string, error: string): void {
     if (this.callbacks?.sendSessionFailed) {
-      this.callbacks.sendSessionFailed(sessionId, error);
+      this.callbacks.sendSessionFailed(callId, error);
     }
   }
 
   /**
    * Handle remote stream
    */
-  private handleRemoteStream(sessionId: string, stream: MediaStream): void {
+  private handleRemoteStream(callId: string, stream: MediaStream): void {
     if (this.callbacks?.handleRemoteStream) {
-      this.callbacks.handleRemoteStream(sessionId, stream);
+      this.callbacks.handleRemoteStream(callId, stream);
     }
   }
 
   /**
    * Cleanup session
    */
-  public cleanupSession(sessionId: string): void {
-    const sessionState = this.sessions.get(sessionId);
+  public cleanupSession(callId: string): void {
+    const sessionState = this.sessions.get(callId);
     if (!sessionState) {
       return;
     }
 
-    console.log('Cleaning up session:', sessionId);
+    console.log('Cleaning up call session:', callId);
 
     // Clear ICE gathering timeout
     if (sessionState.iceGatheringTimeoutId) {
@@ -744,7 +762,7 @@ export class MediaHandler {
       sessionState.peerConnection.close();
     }
 
-    this.sessions.delete(sessionId);
+    this.sessions.delete(callId);
   }
 
   /**
@@ -753,8 +771,8 @@ export class MediaHandler {
   public cleanup(): void {
     console.log('Cleaning up MediaHandler');
     
-    for (const sessionId of this.sessions.keys()) {
-      this.cleanupSession(sessionId);
+    for (const callId of this.sessions.keys()) {
+      this.cleanupSession(callId);
     }
     
     this.sessions.clear();
@@ -763,14 +781,14 @@ export class MediaHandler {
   /**
    * Get session info for debugging
    */
-  public getSessionInfo(sessionId: string): any {
-    const sessionState = this.sessions.get(sessionId);
+  public getSessionInfo(callId: string): any {
+    const sessionState = this.sessions.get(callId);
     if (!sessionState) {
       return null;
     }
 
     return {
-      sessionId,
+      callId,
       signalingState: sessionState.peerConnection.signalingState,
       iceConnectionState: sessionState.peerConnection.iceConnectionState,
       connectionState: sessionState.peerConnection.connectionState,

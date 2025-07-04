@@ -20,59 +20,89 @@ export class SipWorkerClient {
   constructor(tabId?: string, workerPath?: string, type?: ('classic' | 'module')) {
     this.tabId = tabId || `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    // Tạo callbacks cho MediaHandler
+    // Create callbacks for MediaHandler
     const mediaCallbacks: MediaHandlerCallbacks = {
-      sendIceCandidate: (sessionId: string, candidate: RTCIceCandidate) => {
-        this.sendMessage({
+      sendIceCandidate: (callId: string, candidate: RTCIceCandidate) => {
+        // Send ICE candidate to worker
+        const message: SipWorker.Message = {
           type: SipWorker.MessageType.MEDIA_ICE_CANDIDATE,
-          id: `ice-candidate-${Date.now()}`,
-          tabId: this.tabId,
+          id: `ice-${Date.now()}`,
           timestamp: Date.now(),
           data: {
-            sessionId,
-            success: true,
+            callId,
             candidate: candidate.toJSON()
           }
-        });
+        };
+        this.sendMessage(message);
       },
-      sendSessionReady: (sessionId: string) => {
-        this.sendMessage({
+      sendSessionReady: (callId: string) => {
+        // Send session ready to worker
+        const message: SipWorker.Message = {
           type: SipWorker.MessageType.MEDIA_SESSION_READY,
-          id: `session-ready-${Date.now()}`,
-          tabId: this.tabId,
+          id: `ready-${Date.now()}`,
           timestamp: Date.now(),
           data: {
-            sessionId,
+            callId,
             success: true
           }
-        });
+        };
+        this.sendMessage(message);
       },
-      sendSessionFailed: (sessionId: string, error: string) => {
-        this.sendMessage({
+      sendSessionFailed: (callId: string, error: string) => {
+        // Send session failed to worker
+        const message: SipWorker.Message = {
           type: SipWorker.MessageType.MEDIA_SESSION_FAILED,
-          id: `session-failed-${Date.now()}`,
-          tabId: this.tabId,
+          id: `failed-${Date.now()}`,
           timestamp: Date.now(),
           data: {
-            sessionId,
+            callId,
             success: false,
             error
           }
-        });
+        };
+        this.sendMessage(message);
       },
-      handleRemoteStream: (sessionId: string, stream: MediaStream) => {
-        console.log('Received remote stream for session:', sessionId);
+      handleRemoteStream: (callId: string, stream: MediaStream) => {
+        console.log('Received remote stream for call:', callId);
         
-        // Tìm remote audio element và set stream
-        const remoteAudio = document.getElementById('remote-audio') as HTMLAudioElement;
-        if (remoteAudio) {
-          remoteAudio.srcObject = stream;
-          console.log('Remote audio stream set successfully');
-        } else {
-          console.warn('Remote audio element not found');
+        // Try to find audio element with various common IDs
+        let audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
+        if (!audioElement) {
+          audioElement = document.getElementById('remote-audio') as HTMLAudioElement;
+        }
+        if (!audioElement) {
+          audioElement = document.querySelector('audio[data-remote]') as HTMLAudioElement;
+        }
+        if (!audioElement) {
+          audioElement = document.querySelector('audio.remote') as HTMLAudioElement;
         }
         
-        // Có thể emit event hoặc gọi callback từ bên ngoài nếu cần
+        // If still no element found, create one dynamically
+        if (!audioElement) {
+          console.log('No remote audio element found, creating one...');
+          audioElement = document.createElement('audio');
+          audioElement.id = 'remoteAudio';
+          audioElement.autoplay = true;
+          audioElement.controls = false;
+          audioElement.style.display = 'none'; // Hidden by default
+          document.body.appendChild(audioElement);
+          console.log('Created remote audio element with id "remoteAudio"');
+        }
+        
+        // Set the stream
+        audioElement.srcObject = stream;
+        console.log('Remote audio stream set successfully on element:', audioElement.id);
+        
+        // Emit custom event for external handling
+        const remoteStreamEvent = new CustomEvent('sipRemoteStream', {
+          detail: { callId, stream, audioElement }
+        });
+        window.dispatchEvent(remoteStreamEvent);
+        
+        // Also try to call a global callback if it exists
+        if (typeof (window as any).onSipRemoteStream === 'function') {
+          (window as any).onSipRemoteStream(callId, stream, audioElement);
+        }
       }
     };
     
@@ -162,21 +192,70 @@ export class SipWorkerClient {
       this.sendMediaResponse(message.id, SipWorker.MessageType.MEDIA_SESSION_READY, response);
     });
 
-    // Xử lý DTMF requests từ worker
-    this.on(SipWorker.MessageType.DTMF_SEND, async (message) => {
-      const response = await this.mediaHandler.handleDtmfRequest(message.data);
-      // Gửi response về worker với message type tương ứng
-      const responseType = response.success ? 
-        SipWorker.MessageType.DTMF_SENT : 
-        SipWorker.MessageType.DTMF_FAILED;
+    // Xử lý WebRTC DTMF requests từ worker (preferred method)
+    this.on(SipWorker.MessageType.DTMF_REQUEST_WEBRTC, async (message) => {
+     
+     
+      console.log('Client received DTMF_REQUEST_WEBRTC message:', message);
       
-      this.sendMessage({
-        type: responseType,
-        id: `dtmf-response-${message.id}`,
-        tabId: this.tabId,
-        timestamp: Date.now(),
-        data: response
-      });
+      // Skip if this is not a proper DTMF request
+      if (!message.data || typeof message.data !== 'object') {
+        console.warn('Skipping invalid DTMF message - no valid data:', message);
+        return;
+      }
+
+      // Check if this has the expected DTMF structure
+      const data = message.data as any;
+      if (!data.callId || !data.tones) {
+        console.warn('Skipping DTMF message - missing callId or tones:', data);
+        return;
+      }
+
+      try {
+        console.log('Processing WebRTC DTMF:', data.tones, 'for call:', data.callId);
+        
+        // Handle DTMF request via WebRTC
+        const response = await this.mediaHandler.handleDtmfRequest(data);
+        console.log('WebRTC DTMF response:', response);
+        
+        // Send response back to worker
+        const responseType = response.success ? 
+          SipWorker.MessageType.DTMF_SENT : 
+          SipWorker.MessageType.DTMF_FAILED;
+        
+        this.sendMessage({
+          type: responseType,
+          id: `dtmf-response-${message.id}`,
+          tabId: this.tabId,
+          timestamp: Date.now(),
+          data: response
+        });
+      } catch (error: any) {
+        console.error('Error handling WebRTC DTMF:', error);
+        
+        // Send error response
+        this.sendMessage({
+          type: SipWorker.MessageType.DTMF_FAILED,
+          id: `dtmf-response-${message.id}`,
+          tabId: this.tabId,
+          timestamp: Date.now(),
+          data: {
+            callId: data.callId || 'unknown',
+            success: false,
+            tones: data.tones || '',
+            error: error.message || 'WebRTC DTMF handling error'
+          }
+        });
+      }
+    });
+
+    // Nhận DTMF responses để log kết quả
+    this.on(SipWorker.MessageType.DTMF_SENT, (message) => {
+      console.log('DTMF sent successfully:', message.data);
+    });
+
+    this.on(SipWorker.MessageType.DTMF_FAILED, (message) => {
+      console.log('DTMF failed:', message.data);
     });
 
     // Xử lý call control requests từ worker
