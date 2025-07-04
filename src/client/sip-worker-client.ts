@@ -177,7 +177,19 @@ export class SipWorkerClient {
 
     // Xử lý call terminated để reset UI
     this.on(SipWorker.MessageType.CALL_TERMINATED, (message) => {
-      console.log('Call terminated:', message.data);
+      const callData = message.data;
+      let terminationInfo = 'Call terminated';
+      
+      if (callData.statusCode) {
+        terminationInfo += ` - ${callData.statusCode}`;
+        if (callData.reasonPhrase) {
+          terminationInfo += ` ${callData.reasonPhrase}`;
+        }
+      } else if (callData.reason) {
+        terminationInfo += ` - ${callData.reason}`;
+      }
+      
+      console.log(terminationInfo, callData);
       // Event sẽ được forward đến demo HTML handlers
     });
 

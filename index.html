@@ -340,7 +340,29 @@
                 elements.hangUpBtn.disabled = true;
                 elements.makeCallBtn.disabled = false;
                 currentCallId = null;
-                log('info', `Call ${callInfo.id} terminated`);
+                
+                // Tạo thông báo chi tiết với SIP status code
+                let terminationMessage = `Call ${callInfo.id} terminated`;
+                if (callInfo.statusCode) {
+                    terminationMessage += ` - ${callInfo.statusCode}`;
+                    if (callInfo.reasonPhrase) {
+                        terminationMessage += ` ${callInfo.reasonPhrase}`;
+                    }
+                } else if (callInfo.reason) {
+                    terminationMessage += ` - ${callInfo.reason}`;
+                }
+                
+                // Xác định log level dựa trên status code
+                let logLevel = 'info';
+                if (callInfo.statusCode) {
+                    if (callInfo.statusCode >= 400 && callInfo.statusCode < 500) {
+                        logLevel = 'warn'; // Client errors (404, 486, etc.)
+                    } else if (callInfo.statusCode >= 500) {
+                        logLevel = 'error'; // Server errors
+                    }
+                }
+                
+                log(logLevel, terminationMessage);
                 
                 // Clear audio streams
                 elements.localAudio.srcObject = null;

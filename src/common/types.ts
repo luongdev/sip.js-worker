@@ -635,6 +635,21 @@ export namespace SipWorker {
      * ID của tab đang xử lý cuộc gọi
      */
     handlingTabId?: string;
+
+    /**
+     * SIP status code khi cuộc gọi kết thúc (nếu có)
+     */
+    statusCode?: number;
+
+    /**
+     * SIP reason phrase khi cuộc gọi kết thúc (nếu có)
+     */
+    reasonPhrase?: string;
+
+    /**
+     * Lý do chi tiết khi cuộc gọi kết thúc (nếu có)
+     */
+    reason?: string;
   }
 
   /**

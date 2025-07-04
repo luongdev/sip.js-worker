@@ -511,28 +511,102 @@ export class SipCore {
       // Thiết lập event listeners cho inviter
       this.setupInviterListeners(inviter, callInfo);
 
-      // Gửi INVITE với custom headers
-      const inviteResult = await inviter.invite({
-        requestOptions: {
-          extraHeaders: extraHeaders
-        }
-      });
+      // Gửi INVITE với custom headers và request delegate để bắt reject response
+      try {
+        const inviteResult = await inviter.invite({
+          requestOptions: {
+            extraHeaders: extraHeaders
+          },
+          requestDelegate: {
+            onReject: (response) => {
+              // Trích xuất SIP status code từ reject response
+              const statusCode = response.message.statusCode;
+              const reasonPhrase = response.message.reasonPhrase;
+              
+              this.log('info', `Call ${callId} rejected: ${statusCode} ${reasonPhrase}`);
+              
+              // Cập nhật call info
+              callInfo.statusCode = statusCode;
+              callInfo.reasonPhrase = reasonPhrase;
+              callInfo.reason = `${statusCode} ${reasonPhrase}`;
+              callInfo.state = SipWorker.CallState.TERMINATED;
+              callInfo.endTime = Date.now();
+              
+              // Cleanup
+              this.activeCalls.delete(callId);
+              
+              // Broadcast call rejected với SIP status code
+              this.messageBroker.broadcast({
+                type: SipWorker.MessageType.CALL_TERMINATED,
+                id: `call-rejected-${Date.now()}`,
+                timestamp: Date.now(),
+                data: {
+                  id: callId,
+                  state: SipWorker.CallState.TERMINATED,
+                  endTime: Date.now(),
+                  statusCode: statusCode,
+                  reasonPhrase: reasonPhrase,
+                  reason: `${statusCode} ${reasonPhrase}`
+                }
+              });
+            }
+          }
+        });
 
-      // Broadcast thông tin cuộc gọi đi
-      this.broadcastCallStatus(callInfo);
+        // Broadcast thông tin cuộc gọi đi
+        this.broadcastCallStatus(callInfo);
 
-      this.log('info', `Call initiated successfully with ID: ${callId}`);
+        this.log('info', `Call initiated successfully with ID: ${callId}`);
 
-      return {
-        success: true,
-        callInfo: callInfo
-      };
+        return {
+          success: true,
+          callInfo: callInfo
+        };
+
+      } catch (inviteError: any) {
+        // Handle invite setup errors (không phải reject responses)
+        this.log('error', `Call ${callId} setup failed: ${inviteError.message}`);
+        
+        // Cleanup
+        this.activeCalls.delete(callId);
+        
+        // Broadcast call failed
+        this.messageBroker.broadcast({
+          type: SipWorker.MessageType.CALL_TERMINATED,
+          id: `call-failed-${Date.now()}`,
+          timestamp: Date.now(),
+          data: {
+            id: callId,
+            state: SipWorker.CallState.TERMINATED,
+            endTime: Date.now(),
+            reason: `Call setup failed: ${inviteError.message}`
+          }
+        });
+        
+        return {
+          success: false,
+          error: inviteError.message || 'Call setup failed'
+        };
+      }
 
     } catch (error: any) {
       this.log('error', `Failed to make call: ${error.message}`);
       
       // Cleanup nếu có lỗi
       this.activeCalls.delete(callId);
+      
+      // Broadcast call failed để reset UI
+      this.messageBroker.broadcast({
+        type: SipWorker.MessageType.CALL_TERMINATED,
+        id: `call-failed-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          id: callId,
+          state: SipWorker.CallState.TERMINATED,
+          endTime: Date.now(),
+          reason: error.message || 'Unknown error occurred'
+        }
+      });
       
       return {
         success: false,
@@ -623,14 +697,40 @@ export class SipCore {
         case SessionState.Terminated:
           callInfo.state = SipWorker.CallState.TERMINATED;
           callInfo.endTime = Date.now();
+          
+          // Trích xuất SIP status code nếu có
+          if (inviter.delegate && (inviter.delegate as any).terminateReason) {
+            const terminateReason = (inviter.delegate as any).terminateReason;
+            if (terminateReason.statusCode) {
+              callInfo.statusCode = terminateReason.statusCode;
+              callInfo.reasonPhrase = terminateReason.reasonPhrase;
+              callInfo.reason = `${terminateReason.statusCode} ${terminateReason.reasonPhrase}`;
+            }
+          }
+          
           this.activeCalls.delete(callInfo.id);
           this.broadcastCallStatus(callInfo);
+          
+          // Broadcast CALL_TERMINATED để reset UI với SIP status code
+          this.messageBroker.broadcast({
+            type: SipWorker.MessageType.CALL_TERMINATED,
+            id: `call-terminated-${Date.now()}`,
+            timestamp: Date.now(),
+            data: {
+              id: callInfo.id,
+              state: SipWorker.CallState.TERMINATED,
+              endTime: Date.now(),
+              statusCode: callInfo.statusCode,
+              reasonPhrase: callInfo.reasonPhrase,
+              reason: callInfo.reason
+            }
+          });
           break;
       }
     });
 
-    // Note: SIP.js handles reject events automatically via state changes
-    // No need to manually set onReject delegate
+    // Note: Reject/Cancel events được xử lý thông qua invite() promise rejection
+    // và stateChange events đã handle việc cleanup
   }
 
   /**
