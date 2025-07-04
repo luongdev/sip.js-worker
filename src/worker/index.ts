@@ -140,6 +140,15 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho tin nhắn CALL_HANGUP
+  messageBroker.on(SipWorker.MessageType.CALL_HANGUP, async (message, tabId, port) => {
+    if (sipCore) {
+      const request = message.data as { callId: string };
+      return await sipCore.hangupCall(request.callId);
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho ICE candidate từ tab
   messageBroker.on(SipWorker.MessageType.MEDIA_ICE_CANDIDATE, async (message, tabId, port) => {
     console.log('Worker received ICE candidate from tab:', tabId, message.data);

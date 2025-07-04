@@ -423,6 +423,9 @@ export class SipCore {
    * @returns Promise với kết quả cuộc gọi
    */
   public async makeCall(request: SipWorker.MakeCallRequest): Promise<SipWorker.MakeCallResponse> {
+    // Tạo callId duy nhất bằng UUID
+    const callId = uuidv4();
+    
     try {
       // Kiểm tra UserAgent đã được khởi tạo
       if (!this.userAgent) {
@@ -458,9 +461,6 @@ export class SipCore {
       }
 
       this.log('info', `Making call to: ${request.targetUri}`);
-
-      // Tạo callId duy nhất bằng UUID
-      const callId = uuidv4();
 
       // Thêm custom headers nếu có
       const extraHeaders: string[] = [];
@@ -530,9 +530,72 @@ export class SipCore {
 
     } catch (error: any) {
       this.log('error', `Failed to make call: ${error.message}`);
+      
+      // Cleanup nếu có lỗi
+      this.activeCalls.delete(callId);
+      
       return {
         success: false,
-        error: error.message
+        error: error.message || 'Unknown error occurred'
+      };
+    }
+  }
+
+  /**
+   * Kết thúc cuộc gọi
+   * @param callId ID của cuộc gọi cần kết thúc
+   * @returns Promise với kết quả
+   */
+  public async hangupCall(callId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const session = this.activeCalls.get(callId);
+      if (!session) {
+        return {
+          success: false,
+          error: `Call not found: ${callId}`
+        };
+      }
+
+      this.log('info', `Hanging up call: ${callId}`);
+
+      // Kết thúc session
+      if (session.state === SessionState.Established) {
+        await session.bye();
+      } else if (session.state === SessionState.Establishing) {
+        if (session instanceof Inviter) {
+          await session.cancel();
+        } else {
+          // For incoming calls (Invitation), use reject
+          const invitation = session as any;
+          if (invitation.reject) {
+            await invitation.reject();
+          }
+        }
+      }
+
+      // Cleanup
+      this.activeCalls.delete(callId);
+
+      // Broadcast call terminated event
+      this.messageBroker.broadcast({
+        type: SipWorker.MessageType.CALL_TERMINATED,
+        id: `call-terminated-${Date.now()}`,
+        timestamp: Date.now(),
+        data: {
+          id: callId,
+          state: SipWorker.CallState.TERMINATED,
+          endTime: Date.now()
+        }
+      });
+
+      this.log('info', `Call ${callId} terminated successfully`);
+      return { success: true };
+
+    } catch (error: any) {
+      this.log('error', `Failed to hangup call ${callId}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message || 'Unknown error occurred'
       };
     }
   }

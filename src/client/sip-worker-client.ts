@@ -62,8 +62,17 @@ export class SipWorkerClient {
       },
       handleRemoteStream: (sessionId: string, stream: MediaStream) => {
         console.log('Received remote stream for session:', sessionId);
-        // Có thể emit event hoặc gọi callback từ bên ngoài
-        // TODO: Implement remote stream handling
+        
+        // Tìm remote audio element và set stream
+        const remoteAudio = document.getElementById('remote-audio') as HTMLAudioElement;
+        if (remoteAudio) {
+          remoteAudio.srcObject = stream;
+          console.log('Remote audio stream set successfully');
+        } else {
+          console.warn('Remote audio element not found');
+        }
+        
+        // Có thể emit event hoặc gọi callback từ bên ngoài nếu cần
       }
     };
     
@@ -164,6 +173,12 @@ export class SipWorkerClient {
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
       console.log('Connected to worker');
+    });
+
+    // Xử lý call terminated để reset UI
+    this.on(SipWorker.MessageType.CALL_TERMINATED, (message) => {
+      console.log('Call terminated:', message.data);
+      // Event sẽ được forward đến demo HTML handlers
     });
 
     // Cập nhật trạng thái tab khi visibility thay đổi

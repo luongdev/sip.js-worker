@@ -410,11 +410,15 @@
 
         elements.hangUpBtn.addEventListener('click', () => {
             if (currentCallId) {
-                sipClient.emit('call_terminated', {
-                    id: currentCallId,
-                    state: 'terminated'
+                // Gửi hangup request đến worker
+                sipClient.sendMessage({
+                    type: 'call_hangup',
+                    id: `hangup-${Date.now()}`,
+                    tabId: sipClient.getTabId(),
+                    timestamp: Date.now(),
+                    data: { callId: currentCallId }
                 });
-                log('info', 'Call terminated');
+                log('info', 'Hanging up call...');
             }
         });
 
