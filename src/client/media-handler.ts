@@ -61,7 +61,7 @@ export class MediaHandler {
    * Default configuration inspired by SIP.js defaults
    */
   private static readonly DEFAULT_CONFIG: MediaHandlerConfiguration = {
-    iceGatheringTimeout: 10000, // Increased from 5000 to 10000ms
+    iceGatheringTimeout: 5000,
     peerConnectionConfiguration: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
