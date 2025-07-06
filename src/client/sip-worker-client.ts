@@ -640,6 +640,11 @@ export class SipWorkerClient {
    * Yêu cầu đăng ký SIP
    */
   public register(sipConfig: SipWorker.SipConfig, transportConfig: SipWorker.TransportConfig): void {
+    // Update MediaHandler configuration with iceServers from transportConfig
+    this.mediaHandler.updateConfiguration({
+      iceServers: transportConfig.iceServers
+    });
+    
     this.sendMessage({
       type: SipWorker.MessageType.SIP_REGISTER,
       id: `register-${Date.now()}`,
@@ -893,7 +898,7 @@ export class SipWorkerClient {
   private async detectAndUpdateMediaPermission(): Promise<void> {
     try {
       // Try to get user media to detect permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       
       // If successful, permission is granted
       this.updateMediaPermission(SipWorker.TabMediaPermission.GRANTED);
@@ -941,52 +946,5 @@ export class SipWorkerClient {
    */
   public getTabId(): string {
     return this.tabId;
-  }
-
-  // handleStateSync method removed to prevent infinite loops
-  // STATE_SYNC messages are handled by specific handlers only
-
-  /**
-   * Handle state change from worker
-   */
-  private handleStateChange(state: any): void {
-    console.log('Received state change from worker:', state);
-    
-    // Emit state_sync event for UI to handle (reuse same handler)
-    const handlers = this.messageHandlers.get(SipWorker.MessageType.STATE_SYNC);
-    if (handlers) {
-      const message: SipWorker.Message = {
-        type: SipWorker.MessageType.STATE_SYNC,
-        id: `state-change-${Date.now()}`,
-        tabId: this.tabId,
-        timestamp: Date.now(),
-        data: state
-      };
-      
-      handlers.forEach(handler => {
-        try {
-          handler(message);
-        } catch (error) {
-          console.error('Error in state change handler:', error);
-        }
-      });
-    }
-  }
-
-  /**
-   * Update UI for a specific call
-   */
-  private updateCallUI(call: any): void {
-    // This will be implemented based on your UI framework
-    console.log('Updating UI for call:', call);
-    
-    // Example: trigger events for UI components to handle
-    if (call.state === 'ringing' && call.direction === 'incoming') {
-      // Show incoming call UI
-      console.log('Show incoming call UI for:', call.id);
-    } else if (call.state === 'established') {
-      // Show established call UI
-      console.log('Show established call UI for:', call.id);
-    }
   }
 } 

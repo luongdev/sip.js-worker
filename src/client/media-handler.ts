@@ -61,7 +61,7 @@ export class MediaHandler {
    * Default configuration inspired by SIP.js defaults
    */
   private static readonly DEFAULT_CONFIG: MediaHandlerConfiguration = {
-    iceGatheringTimeout: 10000, // Increased from 5000 to 10000ms
+    iceGatheringTimeout: 5000,
     peerConnectionConfiguration: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -867,6 +867,43 @@ export class MediaHandler {
         sessionState?.localDescription?.sdp || '',
         sessionState?.remoteDescription?.sdp || ''
       );
+    }
+  }
+
+  /**
+   * Update configuration with new transport config
+   */
+  public updateConfiguration(transportConfig?: { iceServers?: any[] }): void {
+    if (!transportConfig) {
+      console.log('MediaHandler: No transportConfig provided for update');
+      return;
+    }
+
+    if (transportConfig.iceServers && Array.isArray(transportConfig.iceServers) && transportConfig.iceServers.length > 0) {
+      // Validate iceServers format
+      const validIceServers = transportConfig.iceServers.filter(server => {
+        if (typeof server === 'object' && server !== null && server.urls) {
+          return true;
+        }
+        console.warn('MediaHandler: Invalid iceServer format:', server);
+        return false;
+      });
+
+      if (validIceServers.length > 0) {
+        // Merge with existing configuration, prioritizing transportConfig.iceServers
+        this.configuration = {
+          ...this.configuration,
+          peerConnectionConfiguration: {
+            ...this.configuration.peerConnectionConfiguration,
+            iceServers: validIceServers
+          }
+        };
+        console.log('MediaHandler: Configuration updated with iceServers from transportConfig:', validIceServers);
+      } else {
+        console.warn('MediaHandler: No valid iceServers found in transportConfig, keeping default configuration');
+      }
+    } else {
+      console.log('MediaHandler: No valid iceServers in transportConfig, keeping default configuration');
     }
   }
 } 
