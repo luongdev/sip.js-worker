@@ -84,12 +84,13 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       throw new Error('SessionDescriptionHandler is closed');
     }
     
-    // Check if this is a hold/unhold request
-    const isHoldRequest = options?.hold === true;
     const currentCallInfo = this.workerState?.getActiveCall(this.callId);
-    const isUnholdRequest = options?.hold === false && currentCallInfo?.isOnHold;
+    if (!currentCallInfo) {
+      throw new Error('Call info not found');
+    }
 
-    this.logger.debug(`Hold/Unhold check: hold=${options?.hold}, currentCallInfo.isOnHold=${currentCallInfo?.isOnHold}, isHoldRequest=${isHoldRequest}, isUnholdRequest=${isUnholdRequest}`);
+    const isHoldRequest = options?.hold === true;
+    const isUnholdRequest = options?.hold === false && currentCallInfo.isOnHold;
 
     if (isUnholdRequest && currentCallInfo?.originalSdp?.local) {
       // UNHOLD: Use cached original local SDP (replace sendrecv)
@@ -131,6 +132,9 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
       } else {
         this.logger.debug(`Detected ${sessionConstructorName} session, requesting offer`);
       }
+    } else if (options?.action) {
+      requestType = options?.action;
+      this.logger.debug(`Detected action: ${requestType}`);
     }
     
     // Send media request to tab with hold flag
@@ -162,6 +166,16 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     }
 
     this.logger.debug(`Returning SDP ${requestType} for call: ${this.callId}`);
+    if (!currentCallInfo.originalSdp?.local) {
+      this.workerState?.setActiveCall(this.callId, {
+        ...currentCallInfo,
+        originalSdp: {
+          local: sdpContent,
+          remote: currentCallInfo.originalSdp?.remote ?? ''
+        }
+      });
+      console.log('WorkerSDH.getDescription: Cached original SDP:', this.callId, currentCallInfo);
+    }
 
     return {
       body: sdpContent,
