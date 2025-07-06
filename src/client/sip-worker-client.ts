@@ -11,6 +11,7 @@ export class SipWorkerClient {
   private tabId: string;
   private connected: boolean = false;
   private messageHandlers: Map<SipWorker.MessageType, Function[]> = new Map();
+  private transportConfig: SipWorker.TransportConfig | null = null;
 
   /**
    * Khởi tạo SipWorkerClient
@@ -640,6 +641,14 @@ export class SipWorkerClient {
    * Yêu cầu đăng ký SIP
    */
   public register(sipConfig: SipWorker.SipConfig, transportConfig: SipWorker.TransportConfig): void {
+    // Store transportConfig for MediaHandler
+    this.transportConfig = transportConfig;
+    
+    // Update MediaHandler configuration with iceServers from transportConfig
+    this.mediaHandler.updateConfiguration({
+      iceServers: transportConfig.iceServers
+    });
+    
     this.sendMessage({
       type: SipWorker.MessageType.SIP_REGISTER,
       id: `register-${Date.now()}`,

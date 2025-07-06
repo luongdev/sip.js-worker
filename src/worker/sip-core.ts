@@ -359,12 +359,6 @@ export class SipCore {
         viaHost: uri.host,
         contactName: this.sipConfig.username,
         sessionDescriptionHandlerFactory,
-        sessionDescriptionHandlerFactoryOptions: {
-          iceGatheringTimeout: 2000,
-          peerConnectionConfiguration: {
-            iceServers: this.transportConfig.iceServers
-          }
-        },
         ...this.sipConfig.sipOptions
       };
 
