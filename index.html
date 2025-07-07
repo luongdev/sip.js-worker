@@ -349,22 +349,29 @@
             <!-- SIP Configuration -->
             <div class="form-group">
                 <label for="sip-uri">SIP URI:</label>
-                <input type="text" id="sip-uri" placeholder="sip:1000@sip.example.com" value="sip:100000@devopt.metechvn.com">
+                <input type="text" id="sip-uri" placeholder="sip:1000@sip.example.com" value="sip:10000@devopt.metechvn.com">
             </div>
             
             <div class="form-group">
                 <label for="username">Username:</label>
-                <input type="text" id="username" placeholder="1000" value="100000">
+                <input type="text" id="username" placeholder="1000" value="10000">
             </div>
             
             <div class="form-group">
                 <label for="password">Password:</label>
-                <input type="password" id="password" placeholder="password" value="MDExNDdmNDE5MGQwMTkyMzk=">
+                <input type="password" id="password" placeholder="password" value="oG3!Bki9gfuU">
             </div>
             
             <div class="form-group">
                 <label for="websocket-server">WebSocket Server:</label>
                 <input type="text" id="websocket-server" placeholder="wss://sip.example.com:7443" value="wss://proxy-dev.metechvn.com:7443">
+            </div>
+            
+            <!-- Auto Answer Option -->
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="auto-answer"> Auto Answer Incoming Calls
+                </label>
             </div>
             
             <button id="register-btn">Register</button>
@@ -780,7 +787,7 @@
                 server: elements.websocketServer.value,
                 secure: elements.websocketServer.value.startsWith('wss'),
             };
-            
+
             sipClient.register(sipConfig, transportConfig);
             elements.registerBtn.disabled = true;
             log('info', 'Registering SIP...');
@@ -842,6 +849,13 @@
                 });
                 log('info', `Audio ${e.target.checked ? 'muted' : 'unmuted'}`);
             }
+        });
+
+        // Auto answer checkbox event listener
+        document.getElementById('auto-answer').addEventListener('change', (e) => {
+            const autoAcceptCalls = e.target.checked;
+            sipClient.updateConfig({ autoAcceptCalls });
+            log('info', `Auto answer: ${autoAcceptCalls ? 'enabled' : 'disabled'}`);
         });
 
         elements.answerBtn.addEventListener('click', () => {

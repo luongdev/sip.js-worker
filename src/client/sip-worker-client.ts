@@ -664,6 +664,19 @@ export class SipWorkerClient {
   }
 
   /**
+   * Cập nhật cấu hình SIP
+   */
+  public updateConfig(config: SipWorker.SipUpdateConfigRequest): void {
+    this.sendMessage({
+      type: SipWorker.MessageType.SIP_UPDATE_CONFIG,
+      id: `update-config-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: config
+    });
+  }
+
+  /**
    * Hủy đăng ký SIP
    */
   public unregister(): void {
