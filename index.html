@@ -717,6 +717,9 @@
                     
                     // Update buttons based on call state
                     if (activeCall.state === 'established') {
+                        // Hide incoming call UI when call is established
+                        elements.incomingCall.style.display = 'none';
+                        
                         elements.hangUpBtn.disabled = false;
                         elements.makeCallBtn.disabled = true;
                         elements.dtmfSend.disabled = false;
@@ -725,12 +728,27 @@
                         
                         // Update button states based on mute/hold status from synced data
                         updateCallControlButtonStates(activeCall.isMuted || false, activeCall.isOnHold || false);
+                        
+                        log('info', `Call established: ${activeCall.callId}`);
                     } else if (activeCall.state === 'ringing' && activeCall.direction === 'incoming') {
-                        // Show incoming call UI
+                        // Show incoming call UI only for incoming ringing calls
                         elements.incomingCaller.textContent = activeCall.remoteDisplayName || activeCall.remoteUri || 'Unknown';
                         elements.incomingCallId.textContent = activeCall.id || activeCall.callId;
                         elements.incomingCall.style.display = 'block';
                         updateCallStatus('Incoming');
+                        
+                        log('info', `Incoming call UI shown: ${activeCall.callId}`);
+                    } else {
+                        // For other states (connecting, etc.), hide incoming call UI
+                        elements.incomingCall.style.display = 'none';
+                        
+                        // Update other UI elements based on state
+                        if (activeCall.state === 'connecting' || activeCall.state === 'ringing') {
+                            elements.hangUpBtn.disabled = false;
+                            elements.makeCallBtn.disabled = true;
+                        }
+                        
+                        log('info', `Call state updated: ${activeCall.callId} (${activeCall.state})`);
                     }
                     
                     log('info', `Synced active call: ${activeCall.callId} (${activeCall.state})`);
@@ -749,6 +767,8 @@
                 if (state.sipRegistration?.registered) {
                     elements.makeCallBtn.disabled = false;
                 }
+                
+                log('info', 'No active calls - UI reset');
             }
             
             // Update tab permissions (for debugging)

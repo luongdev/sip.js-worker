@@ -18,6 +18,10 @@ export class SipWorkerClient {
   private tabId: string;
   private connected: boolean = false;
   private messageHandlers: Map<SipWorker.MessageType, Function[]> = new Map();
+  
+  // New: ServiceWorker notification support
+  private notificationChannel: BroadcastChannel | null = null;
+  private serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
 
   /**
    * Khởi tạo SipWorkerClient
@@ -136,6 +140,132 @@ export class SipWorkerClient {
     
     // Đăng ký media handlers
     this.registerMediaHandlers();
+    
+    // New: Khởi tạo ServiceWorker cho notifications
+    this.initServiceWorkerNotifications();
+  }
+
+  /**
+   * Initialize ServiceWorker for push notifications
+   */
+  private async initServiceWorkerNotifications(): Promise<void> {
+    try {
+      // Check ServiceWorker support
+      if (!('serviceWorker' in navigator)) {
+        console.warn('ServiceWorker not supported, notifications will use fallback');
+        return;
+      }
+
+      // Register ServiceWorker
+      this.serviceWorkerRegistration = await navigator.serviceWorker.register(
+        '/sip-notifications-sw.js', // ServiceWorker file
+        { scope: '/' }
+      );
+
+      console.log('SIP Notifications ServiceWorker registered successfully');
+
+      // Setup BroadcastChannel communication
+      this.notificationChannel = new BroadcastChannel('sip-notifications');
+      
+      // Note: Client does NOT listen for notification actions from BroadcastChannel
+      // to avoid duplicate processing. Only SharedWorker handles notification actions.
+      // Client only receives UI feedback via ServiceWorker postMessage.
+
+      // Listen for ServiceWorker messages
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        this.handleServiceWorkerMessage(event.data);
+      });
+
+      // Request notification permission if not granted
+      await this.requestNotificationPermission();
+
+    } catch (error) {
+      console.warn('Failed to initialize ServiceWorker notifications:', error);
+      // Fallback to tab-based notifications if ServiceWorker fails
+    }
+  }
+
+  /**
+   * Request notification permission
+   */
+  private async requestNotificationPermission(): Promise<void> {
+    if (!('Notification' in window)) {
+      console.warn('Browser notifications not supported');
+      return;
+    }
+
+    if (Notification.permission === 'default') {
+      const permission = await Notification.requestPermission();
+      console.log('Notification permission:', permission);
+    }
+  }
+
+  /**
+   * Handle notification actions from ServiceWorker
+   */
+  private handleNotificationAction(data: any): void {
+    console.log('handleNotificationAction called with data:', data);
+    console.log('Data type:', typeof data, 'Keys:', Object.keys(data || {}));
+    
+    const { type, action, callId } = data;
+    
+    console.log('Extracted values - type:', type, 'action:', action, 'callId:', callId);
+    
+    if (type === 'NOTIFICATION_ACTION') {
+      console.log(`Notification action received: "${action}" for call ${callId}`);
+      
+      // Focus window
+      window.focus();
+      
+      // Execute action
+      switch (action) {
+        case 'answer':
+          console.log('Executing answer action for call:', callId);
+          this.answerCall(callId);
+          break;
+        case 'reject':
+          console.log('Executing reject action for call:', callId);
+          this.rejectCall(callId);
+          break;
+        default:
+          console.warn(`Unknown notification action: "${action}" (type: ${typeof action})`);
+          console.warn('Full data object:', JSON.stringify(data, null, 2));
+      }
+
+      // Emit custom event for external handling
+      const notificationEvent = new CustomEvent('sipNotificationAction', {
+        detail: { action, callId }
+      });
+      window.dispatchEvent(notificationEvent);
+    } else {
+      console.warn('Invalid notification action type:', type, 'Expected: NOTIFICATION_ACTION');
+    }
+  }
+
+  /**
+   * Handle ServiceWorker messages
+   */
+  private handleServiceWorkerMessage(data: any): void {
+    const { type } = data;
+    
+    switch (type) {
+      case 'NOTIFICATION_ACTION':
+        // Legacy: still handle for backward compatibility
+        this.handleNotificationAction(data);
+        break;
+      case 'NOTIFICATION_UI_FEEDBACK':
+        // Only for UI feedback, don't execute action (SharedWorker handles it)
+        console.log('Notification UI feedback:', data.action, 'for call:', data.callId);
+        
+        // Emit custom event for external handling
+        const notificationEvent = new CustomEvent('sipNotificationAction', {
+          detail: { action: data.action, callId: data.callId }
+        });
+        window.dispatchEvent(notificationEvent);
+        break;
+      default:
+        console.log('Unknown ServiceWorker message:', type);
+    }
   }
 
   /**
@@ -971,6 +1101,12 @@ export class SipWorkerClient {
     
     if (this.port) {
       this.port.close();
+    }
+    
+    // Cleanup ServiceWorker resources
+    if (this.notificationChannel) {
+      this.notificationChannel.close();
+      this.notificationChannel = null;
     }
     
     this.connected = false;
