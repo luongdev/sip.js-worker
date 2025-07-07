@@ -521,7 +521,7 @@
         // Initialize client
         function initClient() {
             try {
-                sipClient = new SipWorkerClient();
+                sipClient = new SipWorkerClient(null, { iceGatheringTimeout: 10000, peerConnectionConfiguration: { iceServers:[] } });
                 elements.tabId.value = sipClient.getTabId();
                 
                 // Register event handlers
@@ -779,12 +779,6 @@
             const transportConfig = {
                 server: elements.websocketServer.value,
                 secure: elements.websocketServer.value.startsWith('wss'),
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                    { urls: 'stun:stun.cloudflare.com:3478' }
-                ]
             };
             
             sipClient.register(sipConfig, transportConfig);

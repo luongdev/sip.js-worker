@@ -1,6 +1,12 @@
 import { SipWorker } from '../common/types';
-import { MediaHandler, MediaHandlerCallbacks } from './media-handler';
+import { MediaHandler, MediaHandlerCallbacks, MediaHandlerConfiguration } from './media-handler';
 import { v7 as uuidv7, validate as uuidValidate } from 'uuid';
+
+export interface SipWorkerClientOptions {
+  tabId?: string;
+  workerPath?: string;
+  type?: ('classic' | 'module');
+}
 
 /**
  * SipWorkerClient class để kết nối với SharedWorker và xử lý media
@@ -18,9 +24,11 @@ export class SipWorkerClient {
    * @param workerPath Đường dẫn đến worker script
    * @param tabId ID của tab (optional, sẽ tự tạo nếu không có)
    */
-  constructor(tabId?: string, workerPath?: string, type?: ('classic' | 'module')) {
-    this.tabId = tabId || `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+  constructor(options?: SipWorkerClientOptions, mediaOptions?: MediaHandlerConfiguration) {
+    this.tabId = options?.tabId || `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const workerPath = options?.workerPath || new URL('../worker/index.ts', import.meta.url).toString();
+    const type = options?.type || 'module';
+
     // Create callbacks for MediaHandler
     const mediaCallbacks: MediaHandlerCallbacks = {
       sendIceCandidate: (callId: string, candidate: RTCIceCandidate) => {
@@ -121,7 +129,7 @@ export class SipWorkerClient {
       }
     };
     
-    this.mediaHandler = new MediaHandler(mediaCallbacks);
+    this.mediaHandler = new MediaHandler(mediaCallbacks, mediaOptions);
     
     // Khởi tạo SharedWorker
     this.initWorker(workerPath, type);
