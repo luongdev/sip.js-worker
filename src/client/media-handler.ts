@@ -61,7 +61,7 @@ export class MediaHandler {
    * Default configuration inspired by SIP.js defaults
    */
   private static readonly DEFAULT_CONFIG: MediaHandlerConfiguration = {
-    iceGatheringTimeout: 5000,
+    iceGatheringTimeout: 2000,
     peerConnectionConfiguration: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -316,10 +316,8 @@ export class MediaHandler {
       sessionState = await this.createSession(callId);
     }
 
-    // Get local media stream (similar to SIP.js getLocalMediaStream)
     await this.getLocalMediaStream(sessionState, constraints);
 
-    // Create local offer (similar to SIP.js createLocalOfferOrAnswer)
     const offer = await this.createLocalOffer(sessionState);
     
     // Set local description
@@ -675,7 +673,6 @@ export class MediaHandler {
       throw new Error(`Cannot create offer in signaling state: ${pc.signalingState}`);
     }
 
-    console.log('Creating local offer');
     return await pc.createOffer();
   }
 
