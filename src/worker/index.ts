@@ -150,6 +150,15 @@ function registerMessageHandlers() {
     return { success: false, error: 'SIP not initialized' };
   });
 
+  // Handler cho tin nhắn SIP_UPDATE_CONFIG
+  messageBroker.on(SipWorker.MessageType.SIP_UPDATE_CONFIG, async (message, tabId, port) => {
+    if (sipCore) {
+      sipCore.updateConfig(message.data || {});
+      return { success: true };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho tin nhắn CALL_MAKE
   messageBroker.on(SipWorker.MessageType.CALL_MAKE, async (message, tabId, port) => {
     if (sipCore) {

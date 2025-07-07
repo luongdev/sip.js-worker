@@ -29,6 +29,7 @@ export namespace SipWorker {
     SIP_UNREGISTERED = 'sip_unregistered',   // Đã hủy đăng ký SIP
     SIP_REGISTRATION_FAILED = 'sip_registration_failed', // Đăng ký SIP thất bại
     SIP_UPDATE_CREDENTIALS = 'sip_update_credentials', // Cập nhật thông tin đăng nhập SIP
+    SIP_UPDATE_CONFIG = 'sip_update_config', // Cập nhật cấu hình SIP (autoAcceptCalls, etc.)
 
     // Tin nhắn cuộc gọi
     CALL_INCOMING = 'call_incoming',         // Có cuộc gọi đến
@@ -393,6 +394,16 @@ export namespace SipWorker {
      * Thời gian chờ tối đa để chọn tab xử lý cuộc gọi (ms)
      */
     tabSelectionTimeout?: number;
+  }
+
+  /**
+   * Request data for SIP_UPDATE_CONFIG message
+   */
+  export interface SipUpdateConfigRequest {
+    /**
+     * Có tự động chấp nhận cuộc gọi đến không
+     */
+    autoAcceptCalls?: boolean;
   }
 
   /**

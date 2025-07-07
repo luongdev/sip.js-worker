@@ -323,6 +323,17 @@ export class SipCore {
   }
 
   /**
+   * Cập nhật cấu hình SIP
+   * @param config Cấu hình mới
+   */
+  public updateConfig(config: { autoAcceptCalls?: boolean }): void {
+    if (config.autoAcceptCalls !== undefined) {
+      this.autoAcceptCalls = config.autoAcceptCalls;
+      this.log('info', `Auto accept calls updated: ${this.autoAcceptCalls}`);
+    }
+  }
+
+  /**
    * Khởi tạo UserAgent
    */
   private initUserAgent(): void {
@@ -720,22 +731,16 @@ export class SipCore {
       }
 
       this.log('info', `Accepting incoming call: ${callId}`);
-
-      // Chấp nhận cuộc gọi với media constraints
-      const acceptOptions = {
+      
+      await session.accept({
         sessionDescriptionHandlerOptions: {
           constraints: {
             audio: true,
             video: false
-          }
-        }
-      };
-
-      // Hack: Thêm callId vào sessionDescriptionHandlerOptions để truyền cho factory
-      (acceptOptions.sessionDescriptionHandlerOptions as any).callId = callId;
-      console.log('SipCore: Set callId in accept options:', callId);
-
-      await session.accept(acceptOptions);
+          },
+          callId,
+        } as WorkerSessionDescriptionHandlerOptions,
+      });
 
       this.log('info', `Call ${callId} accepted successfully`);
       return { success: true };
