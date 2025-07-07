@@ -21,7 +21,7 @@ import {
   Web,
   InviterOptions
 } from 'sip.js';
-import { v4 as uuidv4 } from 'uuid';
+import { v7 as uuidv7 } from 'uuid';
 import { WorkerState } from './worker-state';
 
 // Định nghĩa LogLevel theo đúng định nghĩa từ sip.js
@@ -465,13 +465,14 @@ export class SipCore {
    * @returns Promise với kết quả cuộc gọi
    */
   public async makeCall(request: SipWorker.MakeCallRequest): Promise<SipWorker.MakeCallResponse> {
-    // Tạo callId duy nhất bằng UUID
-    const callId = uuidv4();
+    // Sử dụng callId từ client hoặc tạo mới nếu không có
+    const callId = request.callId || uuidv7();
     
     try {
       if (!this.userAgent) {
         return {
           success: false,
+          callId,
           error: 'UserAgent not initialized'
         };
       }
@@ -480,6 +481,7 @@ export class SipCore {
       if (!this.registered) {
         return {
           success: false,
+          callId,
           error: 'SIP not registered'
         };
       }
@@ -488,6 +490,7 @@ export class SipCore {
       if (!request.targetUri) {
         return {
           success: false,
+          callId,
           error: 'Target URI is required'
         };
       }
@@ -497,6 +500,7 @@ export class SipCore {
       if (!targetUri) {
         return {
           success: false,
+          callId,
           error: `Invalid target URI: ${request.targetUri}`
         };
       }
@@ -634,6 +638,7 @@ export class SipCore {
 
         return {
           success: true,
+          callId,
           callInfo: callInfo
         };
 
@@ -659,6 +664,7 @@ export class SipCore {
         
         return {
           success: false,
+          callId,
           error: inviteError.message || 'Call setup failed'
         };
       }
@@ -684,6 +690,7 @@ export class SipCore {
       
       return {
         success: false,
+        callId,
         error: error.message || 'Unknown error occurred'
       };
     }

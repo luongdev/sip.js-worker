@@ -1,5 +1,6 @@
 import { SipWorker } from '../common/types';
 import { MediaHandler, MediaHandlerCallbacks } from './media-handler';
+import { v7 as uuidv7, validate as uuidValidate } from 'uuid';
 
 /**
  * SipWorkerClient class để kết nối với SharedWorker và xử lý media
@@ -669,14 +670,35 @@ export class SipWorkerClient {
   /**
    * Tạo cuộc gọi
    */
-  public makeCall(targetUri: string, extraHeaders?: Record<string, string>): void {
+  public makeCall(targetUri: string, callId?: string, extraHeaders?: Record<string, string>): string {
+    // Validate and generate callId
+    const validatedCallId = this.validateAndGenerateCallId(callId);
+    
     this.sendMessage({
       type: SipWorker.MessageType.CALL_MAKE,
       id: `make-call-${Date.now()}`,
       tabId: this.tabId,
       timestamp: Date.now(),
-      data: { targetUri, extraHeaders }
+      data: { targetUri, callId: validatedCallId, extraHeaders }
     });
+    
+    return validatedCallId;
+  }
+
+  /**
+   * Validate UUID and generate if needed
+   */
+  private validateAndGenerateCallId(callId?: string): string {
+    if (!callId) {
+      return uuidv7();
+    }
+    
+    if (uuidValidate(callId)) {
+      return callId;
+    } else {
+      console.warn(`Invalid callId format: ${callId}, generating new UUID`);
+      return uuidv7();
+    }
   }
 
   /**

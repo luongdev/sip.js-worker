@@ -801,9 +801,10 @@
         elements.makeCallBtn.addEventListener('click', () => {
             const targetUri = elements.targetUri.value;
             if (targetUri) {
-                sipClient.makeCall(targetUri);
+                const callId = sipClient.makeCall(targetUri);
+                elements.callId.value = callId;
                 elements.makeCallBtn.disabled = true;
-                log('info', `Making call to ${targetUri}...`);
+                log('info', `Making call[${callId}] to ${targetUri}...`);
             }
         });
 

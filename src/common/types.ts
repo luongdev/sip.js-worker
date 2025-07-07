@@ -708,6 +708,11 @@ export namespace SipWorker {
     targetUri: string;
 
     /**
+     * ID của cuộc gọi (UUID). Nếu không cung cấp hoặc không hợp lệ, sẽ tự động tạo mới
+     */
+    callId?: string;
+
+    /**
      * Các header tùy chọn
      */
     extraHeaders?: Record<string, string>;
@@ -726,6 +731,11 @@ export namespace SipWorker {
      * Có thành công không
      */
     success: boolean;
+
+    /**
+     * ID của cuộc gọi đã tạo
+     */
+    callId: string;
 
     /**
      * Thông tin cuộc gọi (nếu thành công)
