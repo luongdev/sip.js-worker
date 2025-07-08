@@ -158,7 +158,7 @@ export class SipWorkerClient {
 
       // Register ServiceWorker
       this.serviceWorkerRegistration = await navigator.serviceWorker.register(
-        '/sip-notifications-sw.js', // ServiceWorker file
+        '/sw.js',
         { scope: '/' }
       );
 
@@ -637,13 +637,11 @@ export class SipWorkerClient {
 
     const updateTabState = () => {
       const newState = document.visibilityState === 'visible' ? 
-        (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : 
-        SipWorker.TabState.HIDDEN;
+        (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : SipWorker.TabState.HIDDEN;
 
       if (newState !== lastState) {
         lastState = newState;
         
-        // Update tab state
         this.sendMessage({
           type: SipWorker.MessageType.TAB_UPDATE_STATE,
           id: `update-state-${Date.now()}`,
@@ -655,12 +653,9 @@ export class SipWorkerClient {
           }
         });
 
-        // Request fresh state when tab becomes visible/active (from hidden state)
-        if ((newState === SipWorker.TabState.ACTIVE || newState === SipWorker.TabState.VISIBLE) && 
-            lastState === SipWorker.TabState.HIDDEN) {
-          setTimeout(() => {
+        if (lastState === SipWorker.TabState.HIDDEN
+          && (newState === SipWorker.TabState.ACTIVE || newState === SipWorker.TabState.VISIBLE)) {
             this.requestStateSync();
-          }, 100); // Small delay to ensure tab state is updated first
         }
       }
     };
@@ -669,7 +664,7 @@ export class SipWorkerClient {
       if (debounceTimeout) {
         clearTimeout(debounceTimeout);
       }
-      debounceTimeout = setTimeout(updateTabState, 50) as any;
+      debounceTimeout = setTimeout(updateTabState, 10) as any;
     };
 
     // Lắng nghe các sự kiện thay đổi trạng thái

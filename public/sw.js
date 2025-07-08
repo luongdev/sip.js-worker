@@ -18,22 +18,22 @@ const notificationChannel = new BroadcastChannel('sip-notifications');
 
 // Listen for notification requests from SharedWorker
 notificationChannel.addEventListener('message', async (event) => {
-  const { type, callId, callerInfo, timestamp } = event.data;
+  const { type, callId, callerInfo, timestamp, url } = event.data;
   
   console.log('ServiceWorker: Received message from SharedWorker:', event.data);
   
   if (type === 'SHOW_CALL_NOTIFICATION') {
-    await showCallNotification(callId, callerInfo);
+    await showCallNotification(callId, callerInfo, url);
   }
 });
 
 /**
  * Show incoming call notification
  */
-async function showCallNotification(callId, callerInfo) {
+async function showCallNotification(callId, callerInfo, url) {
   try {
     const notificationOptions = {
-      body: `Incoming call from ${callerInfo.displayName || callerInfo.uri}`,
+      body: `Call ${callerInfo.displayName || callerInfo.uri}`,
       icon: '/icons/phone-icon-192.png',
       badge: '/icons/badge-icon-72.png',
       actions: [
@@ -51,6 +51,7 @@ async function showCallNotification(callId, callerInfo) {
       requireInteraction: true, // Don't auto-dismiss
       tag: `sip-call-${callId}`, // Replace previous notifications with same tag
       data: { 
+        url,
         callId, 
         callerInfo,
         timestamp: Date.now() 
@@ -83,7 +84,7 @@ self.addEventListener('notificationclick', async (event) => {
   
   // If user clicked notification body (not button), default to answer
   let action = event.action || 'answer';
-  const { callId, callerInfo } = event.notification.data;
+  const { callId, callerInfo, url } = event.notification.data;
   
   console.log('Final action:', action, 'callId:', callId);
   
@@ -109,7 +110,7 @@ self.addEventListener('notificationclick', async (event) => {
          
          // Open new window if no existing client
          if (!targetClient && clients.openWindow) {
-           targetClient = await clients.openWindow('http://localhost:5173/');
+           targetClient = await clients.openWindow(url);
          }
          
          // Send action ONLY to SharedWorker via BroadcastChannel
