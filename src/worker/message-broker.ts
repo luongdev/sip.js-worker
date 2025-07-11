@@ -19,6 +19,15 @@ export interface MessageHandler<T = any> {
 }
 
 /**
+ * Interface để track thông tin heartbeat của tab
+ */
+interface TabHeartbeat {
+  port: MessagePort;
+  lastSeen: number;
+  missedPings: number;
+}
+
+/**
  * Lớp MessageBroker xử lý việc gửi/nhận tin nhắn giữa worker và các tab
  */
 export class MessageBroker {
@@ -52,12 +61,130 @@ export class MessageBroker {
   private workerState: any;
 
   /**
+   * Map để theo dõi heartbeat của các tab
+   */
+  private tabHeartbeats: Map<string, TabHeartbeat> = new Map();
+
+  /**
+   * Interval để gửi ping
+   */
+  private pingInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Interval để kiểm tra dead connections
+   */
+  private cleanupInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Cấu hình heartbeat
+   */
+  private readonly PING_INTERVAL = 30000; // 30 seconds
+  private readonly PING_TIMEOUT = 90000; // 90 seconds (3 missed pings)
+  private readonly MAX_MISSED_PINGS = 3;
+
+  /**
    * Khởi tạo MessageBroker
    * @param timeout Thời gian timeout cho các yêu cầu (ms)
    */
   constructor(timeout?: number) {
     if (timeout !== undefined) {
       this.defaultTimeout = timeout;
+    }
+
+    // Khởi tạo heartbeat system
+    this.startHeartbeatSystem();
+  }
+
+  /**
+   * Khởi tạo hệ thống heartbeat
+   */
+  private startHeartbeatSystem(): void {
+    // Gửi ping mỗi 30 giây
+    this.pingInterval = setInterval(() => {
+      this.sendPingToAllTabs();
+    }, this.PING_INTERVAL);
+
+    // Kiểm tra dead connections mỗi 15 giây  
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupDeadConnections();
+    }, 15000);
+
+    console.log('Heartbeat system started - using PING/PONG messages');
+  }
+
+  /**
+   * Gửi ping đến tất cả tabs
+   */
+  private sendPingToAllTabs(): void {
+    const pingMessage: SipWorker.Message = {
+      type: SipWorker.MessageType.PING,
+      id: `ping-${Date.now()}`,
+      timestamp: Date.now()
+    };
+
+    this.ports.forEach((port, tabId) => {
+      try {
+        port.postMessage(pingMessage);
+        console.log(`Sent ping to tab: ${tabId}`);
+      } catch (error) {
+        console.warn(`Failed to send ping to tab ${tabId}, marking for cleanup:`, error);
+        this.markTabForCleanup(tabId);
+      }
+    });
+  }
+
+  /**
+   * Đánh dấu tab để cleanup
+   */
+  private markTabForCleanup(tabId: string): void {
+    const heartbeat = this.tabHeartbeats.get(tabId);
+    if (heartbeat) {
+      heartbeat.missedPings++;
+      console.log(`Tab ${tabId} missed ping, count: ${heartbeat.missedPings}`);
+    }
+  }
+
+  /**
+   * Xử lý pong từ tab
+   */
+  private handlePong(tabId: string): void {
+    const heartbeat = this.tabHeartbeats.get(tabId);
+    if (heartbeat) {
+      heartbeat.lastSeen = Date.now();
+      heartbeat.missedPings = 0;
+      console.log(`Received pong from tab: ${tabId}`);
+    }
+  }
+
+  /**
+   * Cleanup dead connections
+   */
+  private cleanupDeadConnections(): void {
+    const now = Date.now();
+    const tabsToRemove: string[] = [];
+
+    this.tabHeartbeats.forEach((heartbeat, tabId) => {
+      const timeSinceLastSeen = now - heartbeat.lastSeen;
+      
+      if (heartbeat.missedPings >= this.MAX_MISSED_PINGS || 
+          timeSinceLastSeen > this.PING_TIMEOUT) {
+        console.warn(`Tab ${tabId} appears to be dead (${heartbeat.missedPings} missed pings, ${timeSinceLastSeen}ms since last seen), removing...`);
+        tabsToRemove.push(tabId);
+      }
+    });
+
+    // Remove dead tabs
+    tabsToRemove.forEach(tabId => {
+      this.unregisterTab(tabId);
+      
+      // Notify tab manager about dead tab
+      if (this.workerState && this.workerState.tabManager) {
+        this.workerState.tabManager.unregisterTab(tabId);
+      }
+    });
+
+    if (tabsToRemove.length > 0) {
+      console.log(`Cleaned up ${tabsToRemove.length} dead tab connections`);
     }
   }
 
@@ -70,6 +197,13 @@ export class MessageBroker {
     // Đăng ký tab mới
     this.ports.set(tabId, port);
 
+    // Khởi tạo heartbeat tracking
+    this.tabHeartbeats.set(tabId, {
+      port,
+      lastSeen: Date.now(),
+      missedPings: 0
+    });
+
     // Thiết lập handler xử lý tin nhắn từ tab
     port.onmessage = (event: MessageEvent) => {
       this.handleIncomingMessage(event.data, tabId, port);
@@ -77,6 +211,7 @@ export class MessageBroker {
 
     // Thiết lập handler xử lý khi tab đóng kết nối
     port.onmessageerror = () => {
+      console.warn(`Message error on tab ${tabId}, unregistering`);
       this.unregisterTab(tabId);
     };
 
@@ -111,6 +246,9 @@ export class MessageBroker {
       this.ports.delete(tabId);
       console.log(`Tab đã hủy đăng ký: ${tabId}`);
     }
+
+    // Cleanup heartbeat tracking
+    this.tabHeartbeats.delete(tabId);
   }
 
   /**
@@ -289,6 +427,12 @@ export class MessageBroker {
     try {
       console.log(`Nhận tin nhắn từ tab ${tabId}:`, message.type);
 
+      // Xử lý PONG để update heartbeat
+      if (message.type === SipWorker.MessageType.PONG) {
+        this.handlePong(tabId);
+        return; // Không cần xử lý thêm
+      }
+
       // Kiểm tra xem có phải là phản hồi cho yêu cầu nào không
       if (message.id && message.id.startsWith('response-')) {
         const requestId = message.id.replace('response-', '');
@@ -399,5 +543,25 @@ export class MessageBroker {
    */
   public setWorkerState(workerState: any): void {
     this.workerState = workerState;
+  }
+
+  /**
+   * Cleanup resources and stop heartbeat system
+   */
+  public cleanup(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
+    // Clear all heartbeat tracking
+    this.tabHeartbeats.clear();
+    
+    console.log('MessageBroker heartbeat system stopped');
   }
 } 

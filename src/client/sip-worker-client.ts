@@ -588,6 +588,17 @@ export class SipWorkerClient {
       }, 100); // Small delay to ensure worker is fully ready
     });
 
+    // Xử lý PING từ worker để maintain connection
+    this.on(SipWorker.MessageType.PING, (message) => {
+      // Tự động phản hồi PONG
+      this.sendMessage({
+        type: SipWorker.MessageType.PONG,
+        id: `pong-${message.id}`,
+        tabId: this.tabId,
+        timestamp: Date.now()
+      });
+    });
+
     // Xử lý call terminated để reset UI và cleanup session
     this.on(SipWorker.MessageType.CALL_TERMINATED, (message) => {
       const callData = message.data;
