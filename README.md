@@ -1,21 +1,21 @@
 # SIP.js Worker
 
-Thư viện SIP client sử dụng Web Worker architecture để xử lý SIP signaling riêng biệt khỏi UI thread. Hỗ trợ multiple tabs cùng chia sẻ một SIP session.
+A SIP client library using Web Worker architecture to handle SIP signaling separately from the UI thread. Supports multiple tabs sharing a single SIP session.
 
-## Tính năng
+## Features
 
-- ✅ **Multi-tab Support**: Nhiều tab có thể cùng chia sẻ một SIP session
-- ✅ **Web Worker Architecture**: SIP signaling chạy trong SharedWorker
-- ✅ **WebRTC Media**: Xử lý audio/video calls với WebRTC
+- ✅ **Multi-tab Support**: Multiple tabs can share a single SIP session
+- ✅ **Web Worker Architecture**: SIP signaling runs in SharedWorker
+- ✅ **WebRTC Media**: Handle audio/video calls with WebRTC
 - ✅ **Call Control**: Hold/unhold, mute/unmute, call transfer
-- ✅ **DTMF Support**: Gửi DTMF tones trong cuộc gọi
-- ✅ **Tab Coordination**: Tự động chọn tab để xử lý media
-- ✅ **State Synchronization**: Đồng bộ trạng thái giữa các tabs
+- ✅ **DTMF Support**: Send DTMF tones during calls
+- ✅ **Tab Coordination**: Automatically select tab to handle media
+- ✅ **State Synchronization**: Synchronize state between tabs
 
-## Cài đặt
+## Installation
 
 ```bash
-npm install
+npm install sip-worker.js
 ```
 
 ## Build
@@ -27,13 +27,13 @@ npm run build
 # Build worker
 npm run build:worker
 
-# Build cả hai
+# Build both
 npm run build:all
 ```
 
-## Sử dụng cơ bản
+## Basic Usage
 
-### 1. Khởi tạo Client
+### 1. Initialize Client
 
 ```typescript
 import { SipWorkerClient } from 'sip-worker.js';
@@ -41,7 +41,7 @@ import { SipWorkerClient } from 'sip-worker.js';
 const sipClient = new SipWorkerClient();
 ```
 
-### 2. Đăng ký SIP
+### 2. SIP Registration
 
 ```typescript
 sipClient.register({
@@ -55,7 +55,7 @@ sipClient.register({
 });
 ```
 
-### 3. Lắng nghe events
+### 3. Event Listeners
 
 ```typescript
 sipClient.on('sip_registered', () => {
@@ -66,10 +66,10 @@ sipClient.on('call_incoming', (message) => {
   const callInfo = message.data;
   console.log(`Incoming call from: ${callInfo.remoteUri}`);
   
-  // Chấp nhận cuộc gọi
+  // Accept call
   sipClient.answerCall(callInfo.id);
   
-  // Hoặc từ chối
+  // Or reject
   // sipClient.rejectCall(callInfo.id);
 });
 
@@ -79,13 +79,13 @@ sipClient.on('call_progress', (message) => {
 });
 ```
 
-### 4. Thực hiện cuộc gọi
+### 4. Make Calls
 
 ```typescript
 sipClient.makeCall('sip:target@domain.com');
 ```
 
-### 5. Điều khiển cuộc gọi
+### 5. Call Control
 
 ```typescript
 // Mute/unmute
@@ -106,14 +106,14 @@ sipClient.transferCall(callId, 'sip:target@domain.com', 'blind');
 ## Architecture
 
 ### Worker Side
-- **SipCore**: Xử lý SIP signaling với SIP.js
-- **TabManager**: Quản lý các tabs và chọn tab xử lý media
-- **MessageBroker**: Xử lý messaging giữa worker và tabs
-- **WorkerSessionDescriptionHandler**: Custom SDP handler cho worker
+- **SipCore**: Handle SIP signaling with SIP.js
+- **TabManager**: Manage tabs and select tab for media handling
+- **MessageBroker**: Handle messaging between worker and tabs
+- **WorkerSessionDescriptionHandler**: Custom SDP handler for worker
 
 ### Client Side  
 - **SipWorkerClient**: Main client API
-- **MediaHandler**: Xử lý WebRTC media, getUserMedia, ICE
+- **MediaHandler**: Handle WebRTC media, getUserMedia, ICE
 
 ### Message Flow
 ```
@@ -124,14 +124,14 @@ Tab C ←→ TabManager
 
 ## Demo
 
-Mở `index.html` trong browser để xem demo đầy đủ với:
+Open `index.html` in browser to see full demo with:
 - SIP registration
 - Incoming/outgoing calls  
 - Call controls (hold, mute, transfer)
 - DTMF keypad
 - Multi-tab coordination
 
-Hoặc chạy dev server:
+Or run dev server:
 
 ```bash
 npm run dev
@@ -163,15 +163,15 @@ interface TransportConfig {
 
 | Event | Description |
 |-------|-------------|
-| `worker_ready` | Worker đã sẵn sàng |
-| `sip_registered` | Đăng ký SIP thành công |
-| `sip_unregistered` | Hủy đăng ký SIP |
-| `sip_registration_failed` | Đăng ký SIP thất bại |
-| `call_incoming` | Có cuộc gọi đến |
-| `call_progress` | Tiến trình cuộc gọi |
-| `call_terminated` | Cuộc gọi kết thúc |
-| `call_muted` | Cuộc gọi đã mute |
-| `call_held` | Cuộc gọi đã hold |
+| `worker_ready` | Worker is ready |
+| `sip_registered` | SIP registration successful |
+| `sip_unregistered` | SIP unregistered |
+| `sip_registration_failed` | SIP registration failed |
+| `call_incoming` | Incoming call |
+| `call_progress` | Call progress |
+| `call_terminated` | Call terminated |
+| `call_muted` | Call muted |
+| `call_held` | Call held |
 
 ## Browser Support
 
@@ -182,4 +182,23 @@ interface TransportConfig {
 
 ## License
 
-MIT 
+This project is licensed under a Custom License. See [LICENSE](LICENSE) file for details.
+
+### Commercial Usage
+
+- **Free for Omicx**: This software is free to use for the Omicx product (https://omicx.vn)
+- **Other Commercial Use**: For all other commercial applications, please contact luongld.it@gmail.com for licensing terms
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Support
+
+For support and questions:
+- Email: luongld.it@gmail.com
+- Issues: [GitHub Issues](https://github.com/your-repo/issues) 

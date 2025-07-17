@@ -1,0 +1,29 @@
+# Development files
+src/
+tsconfig*.json
+vite*.config.ts
+
+# Build tools and configs
+.vscode/
+.git/
+.gitignore
+
+# Development dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archive files
+*.zip
+*.tar.gz
+
+# Example/demo files
+index.html
+
+# Environment files
+.env*
+
+# OS files
+.DS_Store
+Thumbs.db 

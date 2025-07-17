@@ -158,6 +158,11 @@ export class SipCore {
    * @param options Tùy chọn khởi tạo
    * @param workerState WorkerState để quản lý trạng thái
    */
+  /**
+   * BroadcastChannel for ServiceWorker notifications
+   */
+  private notificationChannel: BroadcastChannel | null = null;
+
   constructor(
     messageBroker: MessageBroker,
     tabManager: TabManager,
@@ -176,6 +181,32 @@ export class SipCore {
     this.requestTimeout = options.requestTimeout || 30000;
     this.autoRegister = options.autoRegister !== undefined ? options.autoRegister : true;
     this.autoAcceptCalls = options.autoAcceptCalls !== undefined ? options.autoAcceptCalls : false;
+
+    // Initialize BroadcastChannel for ServiceWorker notifications
+    try {
+      this.notificationChannel = new BroadcastChannel('sip-notifications');
+      this.log('info', 'BroadcastChannel initialized for ServiceWorker notifications');
+      
+      // Listen for notification actions from ServiceWorker
+      this.notificationChannel.addEventListener('message', (event) => {
+        const { type } = event.data;
+        
+        if (type === 'SW_NOTIFICATION_ACTION') {
+          this.handleNotificationAction(event.data);
+        } else if (type === 'REQUEST_STATE_SYNC') {
+          this.log('info', `ServiceWorker requested state sync: ${event.data.reason}`);
+          this.messageBroker.broadcast({
+            type: SipWorker.MessageType.STATE_SYNC,
+            id: `state-sync-sw-${Date.now()}`,
+            timestamp: Date.now(),
+            data: this.workerState?.getSerializableState() || {}
+          });
+        }
+      });
+    } catch (error) {
+      this.log('warn', `Failed to initialize BroadcastChannel: ${error}`);
+      this.notificationChannel = null;
+    }
 
     // Đăng ký các handler xử lý tin nhắn
     this.registerMessageHandlers();
@@ -422,6 +453,51 @@ export class SipCore {
   }
 
   /**
+   * Handle notification actions from ServiceWorker
+   */
+  private handleNotificationAction(data: any): void {
+    const { type, action, callId } = data;
+    
+    if (type === 'SW_NOTIFICATION_ACTION') {
+      this.log('info', `ServiceWorker notification action received: ${action} for call ${callId}`);
+      
+      switch (action) {
+        case 'answer':
+          this.acceptCall(callId);
+          break;
+        case 'reject':
+          this.rejectCall(callId);
+          break;
+        default:
+          this.log('warn', `Unknown notification action: ${action}`);
+      }
+    }
+  }
+
+  /**
+   * Send notification request to ServiceWorker when all tabs are hidden
+   */
+  private sendNotificationToServiceWorker(callInfo: SipWorker.CallInfo): void {
+    if (!this.notificationChannel) {
+      this.log('warn', 'BroadcastChannel not available, cannot send notification to ServiceWorker');
+      return;
+    }
+
+    const notificationData = {
+      type: 'SHOW_CALL_NOTIFICATION',
+      callId: callInfo.id,
+      callerInfo: {
+        uri: callInfo.remoteUri,
+        displayName: callInfo.remoteDisplayName || callInfo.remoteUri
+      },
+      timestamp: Date.now()
+    };
+
+    this.notificationChannel.postMessage(notificationData);
+    this.log('info', `Sent notification request to ServiceWorker for call: ${callInfo.id}`);
+  }
+
+  /**
    * Xử lý cuộc gọi đến
    * @param invitation Invitation từ SIP.js
    */
@@ -462,6 +538,17 @@ export class SipCore {
       timestamp: Date.now(),
       data: callInfo
     });
+    
+    // Check if all tabs are hidden and send notification to ServiceWorker
+    const allTabs = this.tabManager.getAllTabs();
+    const visibleTabs = allTabs.filter(tab => 
+      tab.state === SipWorker.TabState.ACTIVE || tab.state === SipWorker.TabState.VISIBLE
+    );
+    
+    if (visibleTabs.length === 0) {
+      this.log('info', `All tabs are hidden, sending notification to ServiceWorker for call: ${callId}`);
+      this.sendNotificationToServiceWorker(callInfo);
+    }
     
     // Nếu có auto accept, tự động chấp nhận cuộc gọi
     if (this.autoAcceptCalls) {
