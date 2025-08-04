@@ -5,14 +5,14 @@
 import { SipWorker } from '../common/types';
 import { MessageBroker } from './message-broker';
 import { TabManager } from './tab-manager';
-import { 
-  createWorkerSessionDescriptionHandlerFactory, 
+import {
+  createWorkerSessionDescriptionHandlerFactory,
   WorkerSessionDescriptionHandlerOptions,
 } from './worker-session-description-handler';
-import { 
-  UserAgent, 
-  UserAgentOptions, 
-  Registerer, 
+import {
+  UserAgent,
+  UserAgentOptions,
+  Registerer,
   RegistererState,
   Inviter,
   Invitation,
@@ -186,11 +186,11 @@ export class SipCore {
     try {
       this.notificationChannel = new BroadcastChannel('sip-notifications');
       this.log('info', 'BroadcastChannel initialized for ServiceWorker notifications');
-      
+
       // Listen for notification actions from ServiceWorker
       this.notificationChannel.addEventListener('message', (event) => {
         const { type } = event.data;
-        
+
         if (type === 'SW_NOTIFICATION_ACTION') {
           this.handleNotificationAction(event.data);
         } else if (type === 'REQUEST_STATE_SYNC') {
@@ -266,7 +266,7 @@ export class SipCore {
 
   /**
    * Đăng ký các handler xử lý tin nhắn
-   * Note: SIP message handlers được xử lý bởi worker/index.ts, 
+   * Note: SIP message handlers được xử lý bởi worker/index.ts,
    * SipCore chỉ expose public methods để worker gọi
    */
   private registerMessageHandlers(): void {
@@ -323,12 +323,12 @@ export class SipCore {
     if (this.userAgent.userAgentCore && this.userAgent.userAgentCore.configuration) {
       // @ts-ignore - Truy cập thuộc tính private
       const originalAuthFactory = this.userAgent.userAgentCore.configuration.authenticationFactory;
-      
+
       // @ts-ignore - Truy cập thuộc tính private
       this.userAgent.userAgentCore.configuration.authenticationFactory = () => {
         // Gọi hàm gốc để tạo đối tượng DigestAuthentication
         const digestAuth = originalAuthFactory();
-        
+
         // Nếu có thông tin đăng nhập mới, cập nhật trực tiếp vào đối tượng
         if (digestAuth) {
           // @ts-ignore - Truy cập thuộc tính private
@@ -342,7 +342,7 @@ export class SipCore {
             digestAuth.password = credentials.password;
           }
         }
-        
+
         return digestAuth;
       };
     }
@@ -457,10 +457,10 @@ export class SipCore {
    */
   private handleNotificationAction(data: any): void {
     const { type, action, callId } = data;
-    
+
     if (type === 'SW_NOTIFICATION_ACTION') {
       this.log('info', `ServiceWorker notification action received: ${action} for call ${callId}`);
-      
+
       switch (action) {
         case 'answer':
           this.acceptCall(callId);
@@ -504,9 +504,9 @@ export class SipCore {
   private handleIncomingCall(invitation: Invitation): void {
     // Lấy Call-ID từ SIP header (chính xác)
     const callId = invitation.request.callId;
-    
+
     this.log('info', `Incoming call received: ${callId} from ${invitation.remoteIdentity.uri}`);
-    
+
     // Tạo thông tin cuộc gọi
     const callInfo: SipWorker.CallInfo = {
       id: callId,
@@ -516,16 +516,23 @@ export class SipCore {
       remoteDisplayName: invitation.remoteIdentity.displayName || undefined,
       startTime: Date.now(),
       isMuted: false,
-      isOnHold: false
+      isOnHold: false,
+      xHeaders: Object.entries(invitation.request.headers)
+        .filter(([name]) => name.startsWith('X-'))
+        .reduce((acc, [name, values]) => {
+          // For each X- header, take the raw value of the first entry
+          acc[name] = values[0]?.raw || '';
+          return acc;
+        }, {} as Record<string, string>),
       // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected during accept()
     };
-    
+
     // Lưu cuộc gọi vào danh sách
     this.activeCalls.set(callId, invitation);
-    
+
     // Thiết lập event listeners cho invitation
     this.setupInvitationListeners(invitation, callInfo);
-    
+
     // Update WorkerState với incoming call
     if (this.workerState) {
       this.workerState.setActiveCall(callId, callInfo);
@@ -538,18 +545,18 @@ export class SipCore {
       timestamp: Date.now(),
       data: callInfo
     });
-    
+
     // Check if all tabs are hidden and send notification to ServiceWorker
     const allTabs = this.tabManager.getAllTabs();
-    const visibleTabs = allTabs.filter(tab => 
+    const visibleTabs = allTabs.filter(tab =>
       tab.state === SipWorker.TabState.ACTIVE || tab.state === SipWorker.TabState.VISIBLE
     );
-    
+
     if (visibleTabs.length === 0) {
       this.log('info', `All tabs are hidden, sending notification to ServiceWorker for call: ${callId}`);
       this.sendNotificationToServiceWorker(callInfo);
     }
-    
+
     // Nếu có auto accept, tự động chấp nhận cuộc gọi
     if (this.autoAcceptCalls) {
       this.log('info', `Auto-accepting incoming call: ${callId}`);
@@ -565,7 +572,7 @@ export class SipCore {
   public async makeCall(request: SipWorker.MakeCallRequest): Promise<SipWorker.MakeCallResponse> {
     // Sử dụng callId từ client hoặc tạo mới nếu không có
     const callId = request.callId || uuidv7();
-    
+
     try {
       if (!this.userAgent) {
         return {
@@ -623,7 +630,7 @@ export class SipCore {
         params: { callId },
         earlyMedia: true, // Enable early media support
       } as InviterOptions;
-  
+
       // Tạo Inviter với custom Call-ID thông qua params
       // Sử dụng trick: tạo một inviter tạm để lấy outgoingRequestMessage, sau đó hack callId
       const inviter = new Inviter(this.userAgent, targetUri, inviterOptions);
@@ -646,7 +653,10 @@ export class SipCore {
         remoteDisplayName: targetUri.toString() || undefined,
         startTime: Date.now(),
         isMuted: false,
-        isOnHold: false
+        isOnHold: false,
+        xHeaders: {
+            ...request.extraHeaders
+        }
       };
 
       // Lưu cuộc gọi vào danh sách
@@ -671,19 +681,19 @@ export class SipCore {
               // Trích xuất SIP status code từ reject response
               const statusCode = response.message.statusCode;
               const reasonPhrase = response.message.reasonPhrase;
-              
+
               this.log('info', `Call ${callId} rejected: ${statusCode} ${reasonPhrase}`);
-              
+
               // Cập nhật call info
               callInfo.statusCode = statusCode;
               callInfo.reasonPhrase = reasonPhrase;
               callInfo.reason = `${statusCode} ${reasonPhrase}`;
               callInfo.state = SipWorker.CallState.TERMINATED;
               callInfo.endTime = Date.now();
-              
+
               // Cleanup
               this.activeCalls.delete(callId);
-              
+
               // Broadcast call rejected với SIP status code
               this.messageBroker.broadcast({
                 type: SipWorker.MessageType.CALL_TERMINATED,
@@ -703,9 +713,9 @@ export class SipCore {
               // Handle provisional responses (18x) for early media
               const statusCode = response.message.statusCode;
               const reasonPhrase = response.message.reasonPhrase;
-              
+
               this.log('info', `Call ${callId} progress: ${statusCode} ${reasonPhrase}`);
-              
+
               // Update call state based on provisional response
               if (statusCode === 180) {
                 callInfo.state = SipWorker.CallState.RINGING;
@@ -714,7 +724,7 @@ export class SipCore {
                 // Session Progress - early media available
                 callInfo.state = SipWorker.CallState.RINGING;
                 this.broadcastCallStatus(callInfo);
-                
+
                 // Check if response has SDP for early media
                 const body = response.message.body;
                 if (body && body.includes('application/sdp')) {
@@ -743,10 +753,10 @@ export class SipCore {
       } catch (inviteError: any) {
         // Handle invite setup errors (không phải reject responses)
         this.log('error', `Call ${callId} setup failed: ${inviteError.message}`);
-        
+
         // Cleanup
         this.activeCalls.delete(callId);
-        
+
         // Broadcast call failed
         this.messageBroker.broadcast({
           type: SipWorker.MessageType.CALL_TERMINATED,
@@ -759,7 +769,7 @@ export class SipCore {
             reason: `Call setup failed: ${inviteError.message}`
           }
         });
-        
+
         return {
           success: false,
           callId,
@@ -769,10 +779,10 @@ export class SipCore {
 
     } catch (error: any) {
       this.log('error', `Failed to make call: ${error.message}`);
-      
+
       // Cleanup nếu có lỗi
       this.activeCalls.delete(callId);
-      
+
       // Broadcast call failed để reset UI
       this.messageBroker.broadcast({
         type: SipWorker.MessageType.CALL_TERMINATED,
@@ -785,7 +795,7 @@ export class SipCore {
           reason: error.message || 'Unknown error occurred'
         }
       });
-      
+
       return {
         success: false,
         callId,
@@ -818,7 +828,7 @@ export class SipCore {
       }
 
       this.log('info', `Accepting incoming call: ${callId}`);
-      
+
       await session.accept({
         sessionDescriptionHandlerOptions: {
           constraints: {
@@ -959,13 +969,13 @@ export class SipCore {
       this.workerState.setActiveCall(callInfo.id, callInfo);
       console.log('SipCore.setupInvitationListeners: Initial call info set in WorkerState:', callInfo.id);
     }
-    
+
     // Khi trạng thái invitation thay đổi
     invitation.stateChange.addListener((state) => {
       this.log('info', `Incoming call ${callInfo.id} state changed to: ${state}`);
-      
+
       const currentCallInfo = this.workerState?.getActiveCall(callInfo.id) || callInfo;
-      
+
       switch (state) {
         case SessionState.Establishing:
           currentCallInfo.state = SipWorker.CallState.CONNECTING;
@@ -981,7 +991,7 @@ export class SipCore {
           currentCallInfo.endTime = Date.now();
           this.activeCalls.delete(callInfo.id);
           this.broadcastCallStatus(currentCallInfo);
-          
+
           // Broadcast CALL_TERMINATED để reset UI
           this.messageBroker.broadcast({
             type: SipWorker.MessageType.CALL_TERMINATED,
@@ -1010,14 +1020,14 @@ export class SipCore {
       this.workerState.setActiveCall(callInfo.id, callInfo);
       console.log('SipCore.setupInviterListeners: Initial call info set in WorkerState:', callInfo.id);
     }
-    
+
     // Khi nhận được provisional response
     inviter.stateChange.addListener((state) => {
       this.log('info', `Call ${callInfo.id} state changed to: ${state}`);
-      
+
       // Get current call info from WorkerState to preserve handlingTabId
       const currentCallInfo = this.workerState?.getActiveCall(callInfo.id) || callInfo;
-      
+
       switch (state) {
         case SessionState.Establishing:
           currentCallInfo.state = SipWorker.CallState.RINGING;
@@ -1031,7 +1041,7 @@ export class SipCore {
         case SessionState.Terminated:
           currentCallInfo.state = SipWorker.CallState.TERMINATED;
           currentCallInfo.endTime = Date.now();
-          
+
           // Trích xuất SIP status code nếu có
           if (inviter.delegate && (inviter.delegate as any).terminateReason) {
             const terminateReason = (inviter.delegate as any).terminateReason;
@@ -1041,10 +1051,10 @@ export class SipCore {
               currentCallInfo.reason = `${terminateReason.statusCode} ${terminateReason.reasonPhrase}`;
             }
           }
-          
+
           this.activeCalls.delete(callInfo.id);
           this.broadcastCallStatus(currentCallInfo);
-          
+
           // Broadcast CALL_TERMINATED để reset UI với SIP status code
           this.messageBroker.broadcast({
             type: SipWorker.MessageType.CALL_TERMINATED,
@@ -1089,7 +1099,7 @@ export class SipCore {
           originalSdp: callInfo.originalSdp || existingCallInfo?.originalSdp,
           startTime: callInfo.startTime || existingCallInfo?.startTime || Date.now()
         };
-        
+
         this.workerState.setActiveCall(callInfo.id, updatedCallInfo);
         console.log('SipCore.broadcastCallStatus: Updated call info with preserved properties:', updatedCallInfo.id, 'handlingTabId:', updatedCallInfo.handlingTabId);
       }
@@ -1157,12 +1167,12 @@ export class SipCore {
   private getCallInfoFromSession(session: Session, callId: string): SipWorker.CallInfo | null {
     try {
       const isOutgoing = session instanceof Inviter;
-      const remoteUri = isOutgoing ? 
-        (session as Inviter).remoteIdentity.uri.toString() : 
+      const remoteUri = isOutgoing ?
+        (session as Inviter).remoteIdentity.uri.toString() :
         (session as Invitation).remoteIdentity.uri.toString();
-      
-      const remoteDisplayName = isOutgoing ? 
-        (session as Inviter).remoteIdentity.displayName : 
+
+      const remoteDisplayName = isOutgoing ?
+        (session as Inviter).remoteIdentity.displayName :
         (session as Invitation).remoteIdentity.displayName;
 
       // Map session state to call state
@@ -1186,7 +1196,7 @@ export class SipCore {
 
       // Get existing call info from WorkerState to preserve mute/hold states
       const existingCallInfo = this.workerState?.getActiveCall(callId);
-      
+
       return {
         id: callId,
         direction: isOutgoing ? SipWorker.CallDirection.OUTGOING : SipWorker.CallDirection.INCOMING,
@@ -1247,10 +1257,10 @@ export class SipCore {
     if (!this.userAgent) {
       this.log('info', 'UserAgent not initialized, initializing now...');
       this.initUserAgent();
-      
+
       // Đợi UserAgent được khởi tạo
       await new Promise((resolve) => setTimeout(resolve, 100));
-      
+
       if (!this.userAgent) {
         const error = 'Failed to initialize UserAgent';
         this.log('error', error);
@@ -1437,7 +1447,7 @@ export class SipCore {
 
       // Hybrid approach: Try WebRTC first, fallback to SIP INFO
       const webrtcTimeout = options?.webrtcTimeout || 2000; // 2 seconds timeout
-      
+
       try {
         // Method 1: Try WebRTC DTMF (preferred for better compatibility and real-time)
         const result = await this.sendDtmfViaWebRTC(callId, tones, options, webrtcTimeout);
@@ -1445,7 +1455,7 @@ export class SipCore {
           this.log('info', `DTMF sent successfully via WebRTC: ${tones}`);
           return result;
         }
-        
+
         // If WebRTC failed, log and continue to fallback
         this.log('warn', `WebRTC DTMF failed: ${result.error}, falling back to SIP INFO`);
       } catch (error: any) {
@@ -1463,7 +1473,7 @@ export class SipCore {
           }
         }
       });
-      
+
       this.log('info', `DTMF sent successfully via SIP INFO (fallback): ${tones}`);
       return { success: true };
     } catch (error: any) {
@@ -1474,19 +1484,19 @@ export class SipCore {
 
   /**
    * Gửi DTMF qua WebRTC (RFC 4733) với timeout
-   * @param callId ID của cuộc gọi  
+   * @param callId ID của cuộc gọi
    * @param tones DTMF tones
    * @param options Tùy chọn DTMF
    * @param timeout Timeout in milliseconds
    * @returns Promise với kết quả
    */
   private async sendDtmfViaWebRTC(
-    callId: string, 
-    tones: string, 
+    callId: string,
+    tones: string,
     options?: any,
     timeout: number = 2000
   ): Promise<{ success: boolean; error?: string }> {
-    
+
     // Get call info to find the handling tab
     const currentCallInfo = this.workerState?.getActiveCall(callId);
     let handlingTabId = currentCallInfo?.handlingTabId;
@@ -1494,7 +1504,7 @@ export class SipCore {
     // If no handlingTabId, try to find any available tab
     if (!handlingTabId) {
       const availableTabIds = this.messageBroker.getTabIds();
-      
+
       if (availableTabIds.length > 0) {
         handlingTabId = availableTabIds[0]; // Use first available tab
         this.log('info', `No handlingTabId found, using first available tab: ${handlingTabId}`);
@@ -1525,11 +1535,11 @@ export class SipCore {
 
     try {
       this.log('info', `Sending WebRTC DTMF to tab: ${handlingTabId}`);
-      
+
       // Send DTMF message to tab (not a request/response pattern)
       // Tab will handle it and send back DTMF_SENT or DTMF_FAILED message
       await this.messageBroker.sendToTab(handlingTabId, request);
-      
+
       // Wait for DTMF response with timeout
       return new Promise<{ success: boolean; error?: string }>((resolve, reject) => {
         const timeoutId = setTimeout(() => {
@@ -1540,7 +1550,7 @@ export class SipCore {
         }, timeout);
 
         let isResolved = false;
-        
+
         const cleanup = () => {
           if (!isResolved) {
             clearTimeout(timeoutId);
@@ -1562,7 +1572,7 @@ export class SipCore {
 
         const dtmfFailedUnsubscribe = this.messageBroker.on(SipWorker.MessageType.DTMF_FAILED, async (message) => {
           const response = message.data as SipWorker.DtmfResponse;
-          // Match both callId and request ID to prevent race conditions between multiple DTMF requests  
+          // Match both callId and request ID to prevent race conditions between multiple DTMF requests
           // Client sends response with ID pattern: "dtmf-response-{originalRequestId}"
           if (response && response.callId === callId && message.id.includes(request.id) && !isResolved) {
             cleanup();
@@ -1603,12 +1613,12 @@ export class SipCore {
       if (handlingTabId) {
         // Send mute request specifically to the tab that owns the session
         this.log('info', `Sending mute request to handling tab: ${handlingTabId}`);
-        
+
         await this.messageBroker.sendToTab(handlingTabId, {
           type: SipWorker.MessageType.CALL_MUTE,
           id: `call-mute-${Date.now()}`,
           timestamp: Date.now(),
-          data: { 
+          data: {
             callId: callId,
             action: 'mute'
           }
@@ -1618,12 +1628,12 @@ export class SipCore {
         // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
         this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
         this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
-        
+
         await this.messageBroker.broadcast({
           type: SipWorker.MessageType.CALL_MUTE,
           id: `call-mute-${Date.now()}`,
           timestamp: Date.now(),
-          data: { 
+          data: {
             callId: callId,
             action: 'mute'
           }
@@ -1631,7 +1641,7 @@ export class SipCore {
       }
 
       this.log('info', `Mute request sent for call: ${callId}`);
-      
+
       // Update call state in WorkerState
       if (currentCallInfo && this.workerState) {
         this.workerState.setActiveCall(callId, {
@@ -1639,7 +1649,7 @@ export class SipCore {
           isMuted: true
         });
       }
-      
+
       return { success: true };
     } catch (error: any) {
       this.log('error', `Failed to mute call: ${error.message}`);
@@ -1672,12 +1682,12 @@ export class SipCore {
       if (handlingTabId) {
         // Send unmute request specifically to the tab that owns the session
         this.log('info', `Sending unmute request to handling tab: ${handlingTabId}`);
-        
+
         await this.messageBroker.sendToTab(handlingTabId, {
           type: SipWorker.MessageType.CALL_UNMUTE,
           id: `call-unmute-${Date.now()}`,
           timestamp: Date.now(),
-          data: { 
+          data: {
             callId: callId,
             action: 'unmute'
           }
@@ -1687,12 +1697,12 @@ export class SipCore {
         // This should rarely happen if WorkerSessionDescriptionHandler is working correctly
         this.log('warn', `No handlingTabId found for call ${callId}, broadcasting to all tabs`);
         this.log('warn', `This may cause "Session not found" errors in tabs that don't own the session - this is normal`);
-        
+
         await this.messageBroker.broadcast({
           type: SipWorker.MessageType.CALL_UNMUTE,
           id: `call-unmute-${Date.now()}`,
           timestamp: Date.now(),
-          data: { 
+          data: {
             callId: callId,
             action: 'unmute'
           }
@@ -1700,7 +1710,7 @@ export class SipCore {
       }
 
       this.log('info', `Unmute request sent for call: ${callId}`);
-      
+
       // Update call state in WorkerState
       if (currentCallInfo && this.workerState) {
         this.workerState.setActiveCall(callId, {
@@ -1708,7 +1718,7 @@ export class SipCore {
           isMuted: false
         });
       }
-      
+
       return { success: true };
     } catch (error: any) {
       this.log('error', `Failed to unmute call: ${error.message}`);
@@ -1723,7 +1733,7 @@ export class SipCore {
    */
   public async holdCall(callId: string): Promise<{ success: boolean; error?: string }> {
     console.log('SipCore.holdCall', callId);
-    
+
     const session = this.activeCalls.get(callId);
     if (!session) {
       return { success: false, error: 'Call not found' };
@@ -1736,7 +1746,7 @@ export class SipCore {
 
     try {
       console.log('Sending hold re-INVITE for call:', callId);
-      
+
       // Send re-INVITE with hold=true option and callId
       await session.invite({
         sessionDescriptionHandlerOptions: {
@@ -1744,7 +1754,7 @@ export class SipCore {
           hold: true
         } as any
       });
-      
+
       console.log('Hold re-INVITE succeeded for call:', callId);
 
       // Update isOnHold state after successful hold
@@ -1759,12 +1769,12 @@ export class SipCore {
       return { success: true };
     } catch (error) {
       console.error('Hold re-INVITE failed for call:', callId, error);
-      
+
       // Check if it's a timeout error
       if (error instanceof Error && error.message.includes('timeout')) {
         return { success: false, error: `Hold operation timeout: ${error.message}` };
       }
-      
+
       return { success: false, error: `Hold failed: ${error}` };
     }
   }
@@ -1776,7 +1786,7 @@ export class SipCore {
    */
   public async unholdCall(callId: string): Promise<{ success: boolean; error?: string }> {
     console.log('SipCore.unholdCall', callId);
-    
+
     const session = this.activeCalls.get(callId);
     if (!session) {
       return { success: false, error: 'Call not found' };
@@ -1789,7 +1799,7 @@ export class SipCore {
 
     try {
       console.log('Sending unhold re-INVITE for call:', callId);
-      
+
       // Send re-INVITE with hold=false option and callId
       await session.invite({
         sessionDescriptionHandlerOptions: {
@@ -1797,7 +1807,7 @@ export class SipCore {
           hold: false
         } as any
       });
-      
+
       console.log('Unhold re-INVITE succeeded for call:', callId);
 
       // Update isOnHold state after successful unhold
@@ -1812,12 +1822,12 @@ export class SipCore {
       return { success: true };
     } catch (error) {
       console.error('Unhold re-INVITE failed for call:', callId, error);
-      
+
       // Check if it's a timeout error
       if (error instanceof Error && error.message.includes('timeout')) {
         return { success: false, error: `Unhold operation timeout: ${error.message}` };
       }
-      
+
       return { success: false, error: `Unhold failed: ${error}` };
     }
   }
@@ -1856,7 +1866,7 @@ export class SipCore {
             extraHeaders: Object.entries(extraHeaders).map(([k, v]) => `${k}: ${v}`)
           }
         } : {};
-        
+
         const referrer = await session.refer(referTo, referOptions);
 
         // TODO: Implement proper REFER state monitoring
@@ -1879,4 +1889,4 @@ export class SipCore {
   public getUserAgent(): UserAgent | null {
     return this.userAgent;
   }
-} 
+}

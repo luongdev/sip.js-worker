@@ -39,6 +39,41 @@ export interface WorkerStateData {
   };
 }
 
+export interface WorkerStateDto {
+  // SIP Registration State
+  sipRegistration: {
+    registered: boolean;
+    uri?: string;
+    username?: string;
+    displayName?: string;
+    error?: string;
+  };
+
+  // Active Calls State
+  activeCalls: SipWorker.CallInfo[];
+
+  // Tab Media Permissions
+  tabPermissions: {
+    tabId: string;
+    mediaPermission: SipWorker.TabMediaPermission;
+    lastUpdated: number;
+  }[];
+
+  // Worker Info
+  workerInfo: {
+    startTime: number;
+    version: string;
+    connectedTabs: number;
+  };
+
+  // Transport State
+  transport: {
+    connected: boolean;
+    server?: string;
+    error?: string;
+  };
+}
+
 export class WorkerState {
   private state: WorkerStateData;
   private listeners: Set<(state: WorkerStateData) => void> = new Set();
@@ -74,7 +109,7 @@ export class WorkerState {
   /**
    * Get serializable state for sending to tabs
    */
-  public getSerializableState(): any {
+  public getSerializableState(): WorkerStateDto {
     return {
       sipRegistration: this.state.sipRegistration,
       activeCalls: Array.from(this.state.activeCalls.entries()).map(([callId, info]) => ({ callId, ...info })),
@@ -212,4 +247,4 @@ export class WorkerState {
     this.state.transport = { connected: false };
     this.notifyListeners();
   }
-} 
+}

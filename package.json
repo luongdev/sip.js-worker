@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "description": "SIP.js WebRTC library with SharedWorker and ServiceWorker support for background call handling",
   "type": "module",
-  "main": "dist/sip-worker.umd.cjs",
-  "module": "dist/sip-worker.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/sip-worker.umd.js",
+  "types": "dist/types/index.d.ts",
   "files": [
     "dist",
     "public/sw.js",
@@ -17,7 +16,9 @@
     "build": "tsc && vite build",
     "build:worker": "tsc && vite build --config vite.worker.config.ts",
     "build:all": "npm run build && npm run build:worker",
-    "build:obfuscated": "npm run build:all && npm run obfuscate",
+    "build:dev": "npm run build -- --mode development && npm run build:worker -- --mode development",
+    "build:prod": "npm run build -- --mode production && npm run build:worker -- --mode production",
+    "build:obfuscated": "npm run build:prod && npm run obfuscate",
     "obfuscate": "node scripts/obfuscate.cjs",
     "restore": "node scripts/obfuscate.cjs restore",
     "preview": "vite preview",
@@ -51,6 +52,7 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.0",
+    "vite-plugin-dts": "^3.7.3",
     "webpack-obfuscator": "^3.5.1"
   },
   "dependencies": {

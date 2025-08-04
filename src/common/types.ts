@@ -51,7 +51,7 @@ export namespace SipWorker {
 
     // Media negotiation for Worker-based SessionDescriptionHandler
     MEDIA_GET_OFFER = 'media_get_offer',          // Worker yêu cầu tab tạo offer SDP
-    MEDIA_GET_ANSWER = 'media_get_answer',        // Worker yêu cầu tab tạo answer SDP 
+    MEDIA_GET_ANSWER = 'media_get_answer',        // Worker yêu cầu tab tạo answer SDP
     MEDIA_SET_REMOTE_SDP = 'media_set_remote_sdp', // Worker gửi remote SDP cho tab
     MEDIA_ICE_CANDIDATE = 'media_ice_candidate',   // Trao đổi ICE candidates
     MEDIA_SESSION_READY = 'media_session_ready',   // Tab báo session đã sẵn sàng
@@ -65,7 +65,7 @@ export namespace SipWorker {
 
       // DTMF
   DTMF_SEND = 'dtmf_send',                 // Client request DTMF tones to worker
-  DTMF_REQUEST_WEBRTC = 'dtmf_request_webrtc', // Worker request WebRTC DTMF to client  
+  DTMF_REQUEST_WEBRTC = 'dtmf_request_webrtc', // Worker request WebRTC DTMF to client
   DTMF_SENT = 'dtmf_sent',                 // DTMF đã được gửi thành công
   DTMF_FAILED = 'dtmf_failed',             // DTMF gửi thất bại
 
@@ -76,7 +76,7 @@ export namespace SipWorker {
     CALL_UNHOLD = 'call_unhold',             // Bỏ giữ cuộc gọi
     CALL_TRANSFER = 'call_transfer',         // Chuyển cuộc gọi
     CALL_REFER = 'call_refer',               // Refer cuộc gọi (attended transfer)
-    
+
     // Call Control Responses
     CALL_MUTED = 'call_muted',               // Cuộc gọi đã được tắt tiếng
     CALL_UNMUTED = 'call_unmuted',           // Cuộc gọi đã được bật tiếng
@@ -89,7 +89,7 @@ export namespace SipWorker {
     WORKER_READY = 'worker_ready',           // Worker đã sẵn sàng
     ERROR = 'error',                         // Lỗi chung
     LOG = 'log',                             // Ghi log
-    
+
     // Tin nhắn ping/pong để kiểm tra kết nối
     PING = 'ping',                           // Ping để kiểm tra kết nối
     PONG = 'pong'                            // Phản hồi ping
@@ -132,7 +132,7 @@ export namespace SipWorker {
        * Mã lỗi
        */
       code: string | number;
-      
+
       /**
        * Thông báo lỗi
        */
@@ -294,12 +294,12 @@ export namespace SipWorker {
      * URLs của ICE server (STUN/TURN)
      */
     urls: string | string[];
-    
+
     /**
      * Tên người dùng cho TURN server (nếu cần)
      */
     username?: string;
-    
+
     /**
      * Mật khẩu cho TURN server (nếu cần)
      */
@@ -707,6 +707,11 @@ export namespace SipWorker {
       local: string;
       remote: string;
     };
+
+    /**
+     * Các header tùy chọn
+     */
+    xHeaders?: Record<string, string>;
   }
 
   /**
@@ -961,4 +966,4 @@ export namespace SipWorker {
      */
     error?: string;
   }
-} 
+}

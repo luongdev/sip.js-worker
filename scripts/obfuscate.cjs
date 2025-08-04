@@ -53,7 +53,7 @@ const obfuscationOptions = {
 
 // Files to obfuscate
 const filesToObfuscate = [
-  'dist/worker/sip-worker.worker.js',
+  'dist/sip-worker.worker.js',
   'dist/sw.js',
   'public/sw.js'
 ];
@@ -66,21 +66,21 @@ function obfuscateFile(filePath) {
     }
 
     console.log(`🔒 Obfuscating: ${filePath}`);
-    
+
     const sourceCode = fs.readFileSync(filePath, 'utf8');
     const obfuscationResult = JavaScriptObfuscator.obfuscate(sourceCode, obfuscationOptions);
-    
+
     // Create backup
     const backupPath = filePath + '.original';
     if (!fs.existsSync(backupPath)) {
       fs.writeFileSync(backupPath, sourceCode);
       console.log(`📋 Backup created: ${backupPath}`);
     }
-    
+
     // Write obfuscated code
     fs.writeFileSync(filePath, obfuscationResult.getObfuscatedCode());
     console.log(`✅ Obfuscated: ${filePath}`);
-    
+
   } catch (error) {
     console.error(`❌ Error obfuscating ${filePath}:`, error.message);
   }
@@ -111,4 +111,4 @@ if (command === 'restore') {
   console.log('🔒 Starting obfuscation process...');
   filesToObfuscate.forEach(obfuscateFile);
   console.log('✅ Obfuscation completed!');
-} 
+}

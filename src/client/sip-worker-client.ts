@@ -1,6 +1,7 @@
 import { SipWorker } from '../common/types';
 import { MediaHandler, MediaHandlerCallbacks, MediaHandlerConfiguration } from './media-handler';
 import { v7 as uuidv7, validate as uuidValidate } from 'uuid';
+import {WorkerStateDto} from "../worker/worker-state.ts";
 
 export interface SipWorkerClientOptions {
   tabId?: string;
@@ -18,7 +19,7 @@ export class SipWorkerClient {
   private tabId: string;
   private connected: boolean = false;
   private messageHandlers: Map<SipWorker.MessageType, Function[]> = new Map();
-  
+
   // New: ServiceWorker notification support
   private notificationChannel: BroadcastChannel | null = null;
   private serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
@@ -77,7 +78,7 @@ export class SipWorkerClient {
       },
       handleRemoteStream: (callId: string, stream: MediaStream) => {
         console.log('Received remote stream for call:', callId);
-        
+
         // Try to find audio element with various common IDs
         let audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
         if (!audioElement) {
@@ -89,7 +90,7 @@ export class SipWorkerClient {
         if (!audioElement) {
           audioElement = document.querySelector('audio.remote') as HTMLAudioElement;
         }
-        
+
         // If still no element found, create one dynamically
         if (!audioElement) {
           console.log('No remote audio element found, creating one...');
@@ -101,17 +102,17 @@ export class SipWorkerClient {
           document.body.appendChild(audioElement);
           console.log('Created remote audio element with id "remoteAudio"');
         }
-        
+
         // Set the stream
         audioElement.srcObject = stream;
         console.log('Remote audio stream set successfully on element:', audioElement.id);
-        
+
         // Emit custom event for external handling
         const remoteStreamEvent = new CustomEvent('sipRemoteStream', {
           detail: { callId, stream, audioElement }
         });
         window.dispatchEvent(remoteStreamEvent);
-        
+
         // Also try to call a global callback if it exists
         if (typeof (window as any).onSipRemoteStream === 'function') {
           (window as any).onSipRemoteStream(callId, stream, audioElement);
@@ -132,15 +133,15 @@ export class SipWorkerClient {
         });
       }
     };
-    
+
     this.mediaHandler = new MediaHandler(mediaCallbacks, mediaOptions);
-    
+
     // Khởi tạo SharedWorker
     this.initWorker(workerPath, type);
-    
+
     // Đăng ký media handlers
     this.registerMediaHandlers();
-    
+
     // New: Khởi tạo ServiceWorker cho notifications
     this.initServiceWorkerNotifications();
   }
@@ -158,7 +159,7 @@ export class SipWorkerClient {
 
       // Register ServiceWorker
       this.serviceWorkerRegistration = await navigator.serviceWorker.register(
-        '/sw.js',
+        '/assets/scripts/sw.js',
         { scope: '/' }
       );
 
@@ -166,7 +167,7 @@ export class SipWorkerClient {
 
       // Setup BroadcastChannel communication
       this.notificationChannel = new BroadcastChannel('sip-notifications');
-      
+
       // Note: Client does NOT listen for notification actions from BroadcastChannel
       // to avoid duplicate processing. Only SharedWorker handles notification actions.
       // Client only receives UI feedback via ServiceWorker postMessage.
@@ -206,17 +207,17 @@ export class SipWorkerClient {
   private handleNotificationAction(data: any): void {
     console.log('handleNotificationAction called with data:', data);
     console.log('Data type:', typeof data, 'Keys:', Object.keys(data || {}));
-    
+
     const { type, action, callId } = data;
-    
+
     console.log('Extracted values - type:', type, 'action:', action, 'callId:', callId);
-    
+
     if (type === 'NOTIFICATION_ACTION') {
       console.log(`Notification action received: "${action}" for call ${callId}`);
-      
+
       // Focus window
       window.focus();
-      
+
       // Execute action
       switch (action) {
         case 'answer':
@@ -247,7 +248,7 @@ export class SipWorkerClient {
    */
   private handleServiceWorkerMessage(data: any): void {
     const { type } = data;
-    
+
     switch (type) {
       case 'NOTIFICATION_ACTION':
         // Legacy: still handle for backward compatibility
@@ -256,7 +257,7 @@ export class SipWorkerClient {
       case 'NOTIFICATION_UI_FEEDBACK':
         // Only for UI feedback, don't execute action (SharedWorker handles it)
         console.log('Notification UI feedback:', data.action, 'for call:', data.callId);
-        
+
         // Emit custom event for external handling
         const notificationEvent = new CustomEvent('sipNotificationAction', {
           detail: { action: data.action, callId: data.callId }
@@ -355,8 +356,8 @@ export class SipWorkerClient {
       data: {
         name: document.title || 'Unknown Tab',
         url: window.location.href,
-        state: document.visibilityState === 'visible' ? 
-          (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : 
+        state: document.visibilityState === 'visible' ?
+          (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) :
           SipWorker.TabState.HIDDEN,
         lastActiveTime: Date.now(),
         createdTime: Date.now(),
@@ -388,10 +389,10 @@ export class SipWorkerClient {
 
     // Xử lý WebRTC DTMF requests từ worker (preferred method)
     this.on(SipWorker.MessageType.DTMF_REQUEST_WEBRTC, async (message) => {
-     
-     
+
+
       console.log('Client received DTMF_REQUEST_WEBRTC message:', message);
-      
+
       // Skip if this is not a proper DTMF request
       if (!message.data || typeof message.data !== 'object') {
         console.warn('Skipping invalid DTMF message - no valid data:', message);
@@ -407,16 +408,16 @@ export class SipWorkerClient {
 
       try {
         console.log('Processing WebRTC DTMF:', data.tones, 'for call:', data.callId);
-        
+
         // Handle DTMF request via WebRTC
         const response = await this.mediaHandler.handleDtmfRequest(data);
         console.log('WebRTC DTMF response:', response);
-        
+
         // Send response back to worker
-        const responseType = response.success ? 
-          SipWorker.MessageType.DTMF_SENT : 
+        const responseType = response.success ?
+          SipWorker.MessageType.DTMF_SENT :
           SipWorker.MessageType.DTMF_FAILED;
-        
+
         this.sendMessage({
           type: responseType,
           id: `dtmf-response-${message.id}`,
@@ -426,7 +427,7 @@ export class SipWorkerClient {
         });
       } catch (error: any) {
         console.error('Error handling WebRTC DTMF:', error);
-        
+
         // Send error response
         this.sendMessage({
           type: SipWorker.MessageType.DTMF_FAILED,
@@ -458,13 +459,13 @@ export class SipWorkerClient {
       console.log('Message data:', message.data);
       console.log('Message data type:', typeof message.data);
       console.log('Message data keys:', Object.keys(message.data || {}));
-      
+
       // Check if this is a broadcast message (has callId and action) vs response message (has success)
       if (message.data && typeof message.data === 'object' && 'success' in message.data) {
         console.log('This is a CALL_MUTE response message, ignoring...');
         return;
       }
-      
+
       // Fix: Extract callId correctly from message structure
       const callId = message.data?.callId;
       console.log('Extracted callId:', callId);
@@ -474,7 +475,7 @@ export class SipWorkerClient {
         return;
       }
       const result = await this.mediaHandler.muteAudio(callId);
-      
+
       // Only send response if this tab actually processed the mute (has the session)
       if (result.success) {
         // Gửi response về worker
@@ -501,13 +502,13 @@ export class SipWorkerClient {
       console.log('Message data:', message.data);
       console.log('Message data type:', typeof message.data);
       console.log('Message data keys:', Object.keys(message.data || {}));
-      
+
       // Check if this is a broadcast message (has callId and action) vs response message (has success)
       if (message.data && typeof message.data === 'object' && 'success' in message.data) {
         console.log('This is a CALL_UNMUTE response message, ignoring...');
         return;
       }
-      
+
       // Fix: Extract callId correctly from message structure
       const callId = message.data?.callId;
       console.log('Extracted callId:', callId);
@@ -517,7 +518,7 @@ export class SipWorkerClient {
         return;
       }
       const result = await this.mediaHandler.unmuteAudio(callId);
-      
+
       // Only send response if this tab actually processed the unmute (has the session)
       if (result.success) {
         // Gửi response về worker
@@ -543,7 +544,7 @@ export class SipWorkerClient {
     this.on(SipWorker.MessageType.CALL_MUTED, (message) => {
       const response = message.data as SipWorker.CallControlResponse;
       console.log('Call muted:', response);
-      
+
       // This is a response/broadcast message, not a request - do not process as mute request
       // Just log for UI sync
     });
@@ -551,7 +552,7 @@ export class SipWorkerClient {
     this.on(SipWorker.MessageType.CALL_UNMUTED, (message) => {
       const response = message.data as SipWorker.CallControlResponse;
       console.log('Call unmuted:', response);
-      
+
       // This is a response/broadcast message, not a request - do not process as unmute request
       // Just log for UI sync
     });
@@ -579,9 +580,9 @@ export class SipWorkerClient {
     // Xử lý worker ready
     this.on(SipWorker.MessageType.WORKER_READY, (message) => {
       this.connected = true;
-      
+
       this.requestStateSync();
-      
+
       setTimeout(() => {
         this.detectAndUpdateMediaPermission();
         this.setupTabStateTracking();
@@ -603,7 +604,7 @@ export class SipWorkerClient {
     this.on(SipWorker.MessageType.CALL_TERMINATED, (message) => {
       const callData = message.data;
       let terminationInfo = 'Call terminated';
-      
+
       if (callData.statusCode) {
         terminationInfo += ` - ${callData.statusCode}`;
         if (callData.reasonPhrase) {
@@ -612,15 +613,15 @@ export class SipWorkerClient {
       } else if (callData.reason) {
         terminationInfo += ` - ${callData.reason}`;
       }
-      
+
       console.log(terminationInfo, callData);
-      
+
       // Fix: Cleanup session in MediaHandler when call terminates
       if (callData.id) {
         console.log(`Cleaning up session for terminated call: ${callData.id}`);
         this.mediaHandler.cleanupSession(callData.id);
       }
-      
+
       // Event sẽ được forward đến demo HTML handlers
     });
 
@@ -647,12 +648,12 @@ export class SipWorkerClient {
     let lastState: SipWorker.TabState | null = null;
 
     const updateTabState = () => {
-      const newState = document.visibilityState === 'visible' ? 
+      const newState = document.visibilityState === 'visible' ?
         (document.hasFocus() ? SipWorker.TabState.ACTIVE : SipWorker.TabState.VISIBLE) : SipWorker.TabState.HIDDEN;
 
       if (newState !== lastState) {
         lastState = newState;
-        
+
         this.sendMessage({
           type: SipWorker.MessageType.TAB_UPDATE_STATE,
           id: `update-state-${Date.now()}`,
@@ -754,7 +755,7 @@ export class SipWorkerClient {
           }
         });
       }
-      
+
       // Handle UI handlers with string key
       const uiHandlers = this.messageHandlers.get('state_sync' as SipWorker.MessageType);
       if (uiHandlers) {
@@ -789,7 +790,7 @@ export class SipWorkerClient {
     this.mediaHandler.updateConfiguration({
       iceServers: transportConfig.iceServers
     });
-    
+
     this.sendMessage({
       type: SipWorker.MessageType.SIP_REGISTER,
       id: `register-${Date.now()}`,
@@ -830,7 +831,7 @@ export class SipWorkerClient {
   public makeCall(targetUri: string, callId?: string, extraHeaders?: Record<string, string>): string {
     // Validate and generate callId
     const validatedCallId = this.validateAndGenerateCallId(callId);
-    
+
     this.sendMessage({
       type: SipWorker.MessageType.CALL_MAKE,
       id: `make-call-${Date.now()}`,
@@ -838,7 +839,7 @@ export class SipWorkerClient {
       timestamp: Date.now(),
       data: { targetUri, callId: validatedCallId, extraHeaders }
     });
-    
+
     return validatedCallId;
   }
 
@@ -849,7 +850,7 @@ export class SipWorkerClient {
     if (!callId) {
       return uuidv7();
     }
-    
+
     if (uuidValidate(callId)) {
       return callId;
     } else {
@@ -1012,7 +1013,7 @@ export class SipWorkerClient {
   /**
    * Lấy trạng thái hiện tại (Promise-based)
    */
-  public async getCurrentState(timeout: number = 5000): Promise<any> {
+  public async getCurrentState(timeout: number = 5000): Promise<WorkerStateDto> {
     return new Promise((resolve, reject) => {
       const requestId = `state-request-${Date.now()}`;
       let timeoutId: number;
@@ -1078,13 +1079,13 @@ export class SipWorkerClient {
     try {
       // Try to get user media to detect permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      
+
       // If successful, permission is granted
       this.updateMediaPermission(SipWorker.TabMediaPermission.GRANTED);
-      
+
       // Stop the stream immediately
       stream.getTracks().forEach(track => track.stop());
-      
+
     } catch (error: any) {
       // Check error type to determine permission status
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
@@ -1104,17 +1105,17 @@ export class SipWorkerClient {
    */
   public cleanup(): void {
     this.mediaHandler.cleanup();
-    
+
     if (this.port) {
       this.port.close();
     }
-    
+
     // Cleanup ServiceWorker resources
     if (this.notificationChannel) {
       this.notificationChannel.close();
       this.notificationChannel = null;
     }
-    
+
     this.connected = false;
     console.log('SipWorkerClient cleaned up');
   }
@@ -1132,4 +1133,4 @@ export class SipWorkerClient {
   public getTabId(): string {
     return this.tabId;
   }
-} 
+}

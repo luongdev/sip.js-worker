@@ -1,23 +1,30 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 
-export default defineConfig({
-  build: {
-    lib: {
-      entry: path.resolve('./src/worker/index.ts'),
-      name: 'SipWorker',
-      fileName: 'sip-worker.worker',
-      formats: ['es']
+// Configuration for worker
+export default defineConfig(({ mode }) => {
+  const isProd = mode === 'production';
+  return {
+    build: {
+      lib: {
+        entry: path.resolve('./src/worker/index.ts'),
+        name: 'SipWorker',
+        formats: ['iife'],
+        fileName: () => `sip-worker.worker.js`,
+      },
+      rollupOptions: {
+        output: {
+          globals: {
+            'sip.js': 'SIP'
+          },
+          inlineDynamicImports: true,
+        },
+      },
+      outDir: 'dist',
+      sourcemap: !isProd,
+      minify: isProd ? 'terser' : false,
+      emptyOutDir: false,
+      target: 'es2015',
     },
-    outDir: 'dist/worker',
-    emptyOutDir: true,
-    // rollupOptions: {
-    //   external: ['sip.js'],
-    //   output: {
-    //     globals: {
-    //       'sip.js': 'SIP'
-    //     }
-    //   }
-    // }
-  }
-}); 
+  };
+});
