@@ -1133,4 +1133,127 @@ export class SipWorkerClient {
   public getTabId(): string {
     return this.tabId;
   }
+
+  /**
+   * Get reconnection status
+   * @returns Promise with reconnection status
+   */
+  public async getReconnectionStatus(): Promise<{
+    isReconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
+    reconnectDelay: number;
+    currentDelay: number;
+    maxReconnectDelay: number;
+    backoffMultiplier: number;
+  }> {
+    return new Promise((resolve, reject) => {
+      const requestId = `reconnection-status-${Date.now()}`;
+      let timeoutId: number;
+
+      // Setup timeout
+      timeoutId = setTimeout(() => {
+        this.off(SipWorker.MessageType.RECONNECTION_STATUS, statusHandler);
+        reject(new Error('Reconnection status request timeout'));
+      }, 5000) as any;
+
+      // Setup response handler
+      const statusHandler = (message: SipWorker.Message) => {
+        if (message.id.includes(requestId)) {
+          clearTimeout(timeoutId);
+          this.off(SipWorker.MessageType.RECONNECTION_STATUS, statusHandler);
+          resolve(message.data);
+        }
+      };
+
+      this.on(SipWorker.MessageType.RECONNECTION_STATUS, statusHandler);
+
+      // Send request
+      this.sendMessage({
+        type: SipWorker.MessageType.RECONNECTION_STATUS,
+        id: requestId,
+        tabId: this.tabId,
+        timestamp: Date.now()
+      });
+    });
+  }
+
+  /**
+   * Manually trigger reconnection
+   * @returns Promise with reconnection result
+   */
+  public async triggerReconnection(): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const requestId = `reconnection-trigger-${Date.now()}`;
+      let timeoutId: number;
+
+      // Setup timeout
+      timeoutId = setTimeout(() => {
+        this.off(SipWorker.MessageType.RECONNECTION_TRIGGER, triggerHandler);
+        reject(new Error('Reconnection trigger timeout'));
+      }, 10000) as any;
+
+      // Setup response handler
+      const triggerHandler = (message: SipWorker.Message) => {
+        if (message.id.includes(requestId)) {
+          clearTimeout(timeoutId);
+          this.off(SipWorker.MessageType.RECONNECTION_TRIGGER, triggerHandler);
+          resolve(message.data);
+        }
+      };
+
+      this.on(SipWorker.MessageType.RECONNECTION_TRIGGER, triggerHandler);
+
+      // Send request
+      this.sendMessage({
+        type: SipWorker.MessageType.RECONNECTION_TRIGGER,
+        id: requestId,
+        tabId: this.tabId,
+        timestamp: Date.now()
+      });
+    });
+  }
+
+  /**
+   * Configure reconnection settings
+   * @param config Reconnection configuration
+   * @returns Promise with configuration result
+   */
+  public async configureReconnection(config: {
+    maxAttempts?: number;
+    delay?: number;
+    maxDelay?: number;
+    backoffMultiplier?: number;
+  }): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const requestId = `reconnection-config-${Date.now()}`;
+      let timeoutId: number;
+
+      // Setup timeout
+      timeoutId = setTimeout(() => {
+        this.off(SipWorker.MessageType.RECONNECTION_CONFIG, configHandler);
+        reject(new Error('Reconnection config timeout'));
+      }, 5000) as any;
+
+      // Setup response handler
+      const configHandler = (message: SipWorker.Message) => {
+        if (message.id.includes(requestId)) {
+          clearTimeout(timeoutId);
+          this.off(SipWorker.MessageType.RECONNECTION_CONFIG, configHandler);
+          resolve(message.data);
+        }
+      };
+
+      this.on(SipWorker.MessageType.RECONNECTION_CONFIG, configHandler);
+
+      // Send request
+      this.sendMessage({
+        type: SipWorker.MessageType.RECONNECTION_CONFIG,
+        id: requestId,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        data: config
+      });
+    });
+  }
 }

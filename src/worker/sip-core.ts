@@ -152,12 +152,17 @@ export class SipCore {
   private activeCalls: Map<string, Session> = new Map();
 
   /**
-   * Khởi tạo SipCore
-   * @param messageBroker MessageBroker để giao tiếp với các tab
-   * @param tabManager TabManager để quản lý các tab
-   * @param options Tùy chọn khởi tạo
-   * @param workerState WorkerState để quản lý trạng thái
+   * Reconnection state
    */
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = Infinity; // Unlimited retries
+  private reconnectDelay: number = 10000; // 10 seconds initial delay
+  private maxReconnectDelay: number = 60000; // 60 seconds max delay
+  private backoffMultiplier: number = 1.3;
+  private reconnectTimer: number | null = null;
+  private isReconnecting: boolean = false;
+  private currentDelay: number = 10000; // Track current delay for backoff
+
   /**
    * BroadcastChannel for ServiceWorker notifications
    */
@@ -369,6 +374,11 @@ export class SipCore {
    */
   private initUserAgent(): void {
     try {
+      this.log('info', `Initializing UserAgent with URI: ${this.sipConfig.uri}`);
+      this.log('info', `Transport server: ${this.transportConfig.server}`);
+      this.log('info', `Transport secure: ${this.transportConfig.secure}`);
+      this.log('info', `Transport reconnection timeout: ${this.transportConfig.reconnectionTimeout}`);
+
       // Tạo URI
       const uri = UserAgent.makeURI(this.sipConfig.uri);
       if (!uri) {
@@ -381,6 +391,8 @@ export class SipCore {
         connectionTimeout: this.transportConfig.reconnectionTimeout
         // Không sử dụng maxReconnectionAttempts vì không được hỗ trợ
       };
+
+      this.log('info', `Transport options: ${JSON.stringify(transportOptions)}`);
 
       // Tạo WorkerSessionDescriptionHandlerFactory
       const sessionDescriptionHandlerFactory = createWorkerSessionDescriptionHandlerFactory(
@@ -404,6 +416,8 @@ export class SipCore {
         ...this.sipConfig.sipOptions
       };
 
+      this.log('info', `UserAgent options created successfully`);
+
       // Tạo UserAgent
       this.userAgent = new UserAgent(userAgentOptions);
 
@@ -414,6 +428,7 @@ export class SipCore {
       this.log('info', 'UserAgent initialized successfully');
     } catch (error: any) {
       this.log('error', `Failed to initialize UserAgent: ${error.message}`);
+      this.log('error', `Error stack: ${error.stack}`);
     }
   }
 
@@ -429,9 +444,18 @@ export class SipCore {
     this.userAgent.delegate = {
       onConnect: () => {
         this.log('info', 'UserAgent connected');
+        // Reset reconnection attempts on successful connection
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
       },
       onDisconnect: (error) => {
         this.log('warn', `UserAgent disconnected: ${error ? error.message : 'Unknown reason'}`);
+        if (error) {
+          this.log('error', `Disconnect error details: ${JSON.stringify(error)}`);
+        }
+        
+        // Trigger automatic reconnection for UserAgent disconnect
+        this.handleTransportDisconnect();
       },
       onInvite: (invitation) => {
         this.handleIncomingCall(invitation);
@@ -441,6 +465,22 @@ export class SipCore {
     // Lắng nghe transport events
     this.userAgent.transport.stateChange.addListener((state) => {
       this.log('info', `Transport state changed to: ${state}`);
+      
+      // Log additional details for specific states
+      switch (state) {
+        case 'Connecting':
+          this.log('info', 'Transport attempting to connect...');
+          break;
+        case 'Connected':
+          this.log('info', 'Transport connected successfully');
+          break;
+        case 'Disconnected':
+          this.log('warn', 'Transport disconnected');
+          break;
+        default:
+          this.log('info', `Transport state: ${state}`);
+          break;
+      }
     });
 
     this.userAgent.transport.onConnect = () => {
@@ -449,6 +489,12 @@ export class SipCore {
 
     this.userAgent.transport.onDisconnect = (error) => {
       this.log('error', `Transport disconnected: ${error ? error.message : 'Unknown reason'}`);
+      if (error) {
+        this.log('error', `Transport disconnect error details: ${JSON.stringify(error)}`);
+      }
+      
+      // Trigger automatic reconnection
+      this.handleTransportDisconnect();
     };
   }
 
@@ -1254,6 +1300,14 @@ export class SipCore {
       return { success: false, error };
     }
 
+    // Validate WebSocket server URL format
+    if (!this.transportConfig.server.startsWith('ws://') && !this.transportConfig.server.startsWith('wss://')) {
+      const error = `Invalid WebSocket server URL: ${this.transportConfig.server}. Must start with ws:// or wss://`;
+      this.log('error', error);
+      this.broadcastRegistrationFailed(error);
+      return { success: false, error };
+    }
+
     if (!this.userAgent) {
       this.log('info', 'UserAgent not initialized, initializing now...');
       this.initUserAgent();
@@ -1273,10 +1327,12 @@ export class SipCore {
 
     // Start UserAgent nếu chưa start
     try {
+      this.log('info', 'Starting UserAgent...');
       await this.userAgent.start();
       this.log('info', 'UserAgent started successfully');
     } catch (error: any) {
       this.log('error', `Failed to start UserAgent: ${error.message}`);
+      this.log('error', `UserAgent start error stack: ${error.stack}`);
       this.broadcastRegistrationFailed(`Failed to start UserAgent: ${error.message}`);
       return { success: false, error: error.message };
     }
@@ -1326,6 +1382,9 @@ export class SipCore {
    * @returns Kết quả hủy đăng ký
    */
   public async unregister(): Promise<any> {
+    // Stop any ongoing reconnection attempts
+    this.stopReconnection();
+
     if (!this.registerer) {
       const error = 'Cannot unregister: Not registered';
       this.log('error', error);
@@ -1888,5 +1947,208 @@ export class SipCore {
    */
   public getUserAgent(): UserAgent | null {
     return this.userAgent;
+  }
+
+  /**
+   * Get reconnection status
+   * @returns Reconnection status information
+   */
+  public getReconnectionStatus(): {
+    isReconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
+    reconnectDelay: number;
+    currentDelay: number;
+    maxReconnectDelay: number;
+    backoffMultiplier: number;
+  } {
+    return {
+      isReconnecting: this.isReconnecting,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+      reconnectDelay: this.reconnectDelay,
+      currentDelay: this.currentDelay,
+      maxReconnectDelay: this.maxReconnectDelay,
+      backoffMultiplier: this.backoffMultiplier
+    };
+  }
+
+  /**
+   * Set reconnection configuration
+   * @param config Reconnection configuration
+   */
+  public setReconnectionConfig(config: {
+    maxAttempts?: number;
+    delay?: number;
+    maxDelay?: number;
+    backoffMultiplier?: number;
+  }): void {
+    if (config.maxAttempts !== undefined) {
+      this.maxReconnectAttempts = config.maxAttempts;
+    }
+    if (config.delay !== undefined) {
+      this.reconnectDelay = config.delay;
+      this.currentDelay = config.delay; // Reset current delay
+    }
+    if (config.maxDelay !== undefined) {
+      this.maxReconnectDelay = config.maxDelay;
+    }
+    if (config.backoffMultiplier !== undefined) {
+      this.backoffMultiplier = config.backoffMultiplier;
+    }
+    this.log('info', `Reconnection config updated: initialDelay=${this.reconnectDelay}ms, maxDelay=${this.maxReconnectDelay}ms, backoffMultiplier=${this.backoffMultiplier}`);
+  }
+
+  /**
+   * Manually trigger reconnection (for testing/debugging)
+   * @returns Promise with reconnection result
+   */
+  public async triggerReconnection(): Promise<{ success: boolean; error?: string }> {
+    try {
+      this.log('info', 'Manual reconnection triggered');
+      this.reconnectAttempts = 0; // Reset attempts for manual trigger
+      await this.attemptReconnection();
+      return { success: true };
+    } catch (error: any) {
+      this.log('error', `Manual reconnection failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Handle transport disconnect and trigger reconnection
+   */
+  private handleTransportDisconnect(): void {
+    if (this.isReconnecting) {
+      this.log('info', 'Already attempting to reconnect, skipping...');
+      return;
+    }
+
+    this.log('info', `Transport disconnected, attempting to reconnect (attempt ${this.reconnectAttempts + 1})`);
+    
+    // Update worker state
+    if (this.workerState) {
+      this.workerState.setReconnection({
+        isReconnecting: true,
+        reconnectAttempts: this.reconnectAttempts + 1,
+        lastReconnectAttempt: Date.now()
+      });
+    }
+    
+    // Clear any existing reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(this.currentDelay, this.maxReconnectDelay);
+    this.log('info', `Scheduling reconnection attempt in ${delay}ms (attempt ${this.reconnectAttempts + 1})`);
+
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+
+    // Schedule reconnection attempt
+    this.reconnectTimer = setTimeout(() => {
+      this.attemptReconnection();
+    }, delay) as any;
+  }
+
+  /**
+   * Attempt to reconnect transport and re-register SIP
+   */
+  private async attemptReconnection(): Promise<void> {
+    try {
+      this.log('info', `Attempting reconnection (attempt ${this.reconnectAttempts})`);
+      
+      // Add safeguard: Stop after 100 attempts to prevent resource exhaustion
+      if (this.reconnectAttempts > 100) {
+        this.log('warn', 'Reconnection attempts exceeded 100, stopping to prevent resource exhaustion');
+        this.broadcastRegistrationFailed('Too many reconnection attempts, stopping to prevent resource exhaustion');
+        this.stopReconnection();
+        return;
+      }
+      
+      // Reset UserAgent if it exists
+      if (this.userAgent) {
+        try {
+          await this.userAgent.stop();
+          this.log('info', 'UserAgent stopped for reconnection');
+        } catch (error: any) {
+          this.log('warn', `Error stopping UserAgent: ${error.message}`);
+        }
+      }
+
+      // Reinitialize UserAgent
+      this.initUserAgent();
+      
+      if (!this.userAgent) {
+        throw new Error('Failed to reinitialize UserAgent');
+      }
+
+      // Start UserAgent
+      await this.userAgent.start();
+      this.log('info', 'UserAgent restarted successfully');
+
+      // Re-register SIP
+      if (this.sipConfig.username && this.sipConfig.password && this.sipConfig.uri) {
+        this.log('info', 'Re-registering SIP after reconnection');
+        await this.register();
+      }
+
+      // Reset reconnection state on success
+      this.reconnectAttempts = 0;
+      this.isReconnecting = false;
+      this.currentDelay = this.reconnectDelay; // Reset delay to initial value
+      this.log('info', 'Reconnection successful');
+
+      // Update worker state
+      if (this.workerState) {
+        this.workerState.setReconnection({
+          isReconnecting: false,
+          reconnectAttempts: 0
+        });
+      }
+
+    } catch (error: any) {
+      this.log('error', `Reconnection attempt failed: ${error.message}`);
+      this.isReconnecting = false;
+      
+      // Apply exponential backoff for next attempt
+      this.currentDelay = Math.min(this.currentDelay * this.backoffMultiplier, this.maxReconnectDelay);
+      this.log('info', `Next reconnection attempt will be in ${this.currentDelay}ms`);
+      
+      // Update worker state
+      if (this.workerState) {
+        this.workerState.setReconnection({
+          isReconnecting: false
+        });
+      }
+      
+      // Schedule next reconnection attempt
+      this.handleTransportDisconnect();
+    }
+  }
+
+  /**
+   * Stop reconnection attempts
+   */
+  private stopReconnection(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.currentDelay = this.reconnectDelay; // Reset to initial delay
+    this.log('info', 'Reconnection attempts stopped');
+    
+    // Update worker state
+    if (this.workerState) {
+      this.workerState.setReconnection({
+        isReconnecting: false,
+        reconnectAttempts: 0
+      });
+    }
   }
 }

@@ -92,7 +92,12 @@ export namespace SipWorker {
 
     // Tin nhắn ping/pong để kiểm tra kết nối
     PING = 'ping',                           // Ping để kiểm tra kết nối
-    PONG = 'pong'                            // Phản hồi ping
+    PONG = 'pong',                           // Phản hồi ping
+
+    // Reconnection messages
+    RECONNECTION_STATUS = 'reconnection_status',     // Get reconnection status
+    RECONNECTION_TRIGGER = 'reconnection_trigger',   // Manually trigger reconnection
+    RECONNECTION_CONFIG = 'reconnection_config'      // Configure reconnection settings
   }
 
   /**

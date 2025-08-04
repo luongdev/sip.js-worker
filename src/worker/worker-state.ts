@@ -37,6 +37,15 @@ export interface WorkerStateData {
     server?: string;
     error?: string;
   };
+
+  // Reconnection State
+  reconnection: {
+    isReconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
+    reconnectDelay: number;
+    lastReconnectAttempt?: number;
+  };
 }
 
 export interface WorkerStateDto {
@@ -72,6 +81,15 @@ export interface WorkerStateDto {
     server?: string;
     error?: string;
   };
+
+  // Reconnection State
+  reconnection: {
+    isReconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
+    reconnectDelay: number;
+    lastReconnectAttempt?: number;
+  };
 }
 
 export class WorkerState {
@@ -92,6 +110,13 @@ export class WorkerState {
       },
       transport: {
         connected: false
+      },
+      reconnection: {
+        isReconnecting: false,
+        reconnectAttempts: 0,
+        maxReconnectAttempts: 5,
+        reconnectDelay: 1000,
+        lastReconnectAttempt: undefined
       }
     };
   }
@@ -115,7 +140,8 @@ export class WorkerState {
       activeCalls: Array.from(this.state.activeCalls.entries()).map(([callId, info]) => ({ callId, ...info })),
       tabPermissions: Array.from(this.state.tabPermissions.entries()).map(([id, permission]) => ({ id, ...permission })),
       workerInfo: this.state.workerInfo,
-      transport: this.state.transport
+      transport: this.state.transport,
+      reconnection: this.state.reconnection
     };
   }
 
@@ -168,6 +194,14 @@ export class WorkerState {
       ...this.state.transport,
       ...transport
     };
+    this.notifyListeners();
+  }
+
+  /**
+   * Set transport state
+   */
+  public setReconnection(reconnection: Partial<WorkerStateData['reconnection']>): void {
+    this.state.reconnection = { ...this.state.reconnection, ...reconnection };
     this.notifyListeners();
   }
 

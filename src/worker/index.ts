@@ -298,6 +298,34 @@ function registerMessageHandlers() {
     return { success: false, error: 'Failed to cache SDP' };
   });
 
+  // Handler cho RECONNECTION_STATUS
+  messageBroker.on(SipWorker.MessageType.RECONNECTION_STATUS, async (message, tabId, port) => {
+    if (sipCore) {
+      const status = sipCore.getReconnectionStatus();
+      return { success: true, data: status };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho RECONNECTION_TRIGGER
+  messageBroker.on(SipWorker.MessageType.RECONNECTION_TRIGGER, async (message, tabId, port) => {
+    if (sipCore) {
+      const result = await sipCore.triggerReconnection();
+      return result;
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
+  // Handler cho RECONNECTION_CONFIG
+  messageBroker.on(SipWorker.MessageType.RECONNECTION_CONFIG, async (message, tabId, port) => {
+    if (sipCore) {
+      const config = message.data as { maxAttempts?: number; delay?: number };
+      sipCore.setReconnectionConfig(config);
+      return { success: true };
+    }
+    return { success: false, error: 'SIP not initialized' };
+  });
+
   // Handler cho CALL_MUTE
   messageBroker.on(SipWorker.MessageType.CALL_MUTE, async (message, tabId, port) => {
     if (sipCore) {
