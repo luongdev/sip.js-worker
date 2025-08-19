@@ -453,7 +453,7 @@ export class SipCore {
         if (error) {
           this.log('error', `Disconnect error details: ${JSON.stringify(error)}`);
         }
-        
+
         // Trigger automatic reconnection for UserAgent disconnect
         this.handleTransportDisconnect();
       },
@@ -465,7 +465,7 @@ export class SipCore {
     // Lắng nghe transport events
     this.userAgent.transport.stateChange.addListener((state) => {
       this.log('info', `Transport state changed to: ${state}`);
-      
+
       // Log additional details for specific states
       switch (state) {
         case 'Connecting':
@@ -492,7 +492,7 @@ export class SipCore {
       if (error) {
         this.log('error', `Transport disconnect error details: ${JSON.stringify(error)}`);
       }
-      
+
       // Trigger automatic reconnection
       this.handleTransportDisconnect();
     };
@@ -1346,7 +1346,8 @@ export class SipCore {
 
       // Tạo Registerer mới
       this.registerer = new Registerer(this.userAgent, {
-        expires: this.sipConfig.registerExpires || 600
+        expires: this.sipConfig.registerExpires || 600,
+        refreshFrequency: this.sipConfig.sipOptions?.['refreshFrequency'] || 90,
       });
 
       // Thiết lập các sự kiện
@@ -2025,7 +2026,7 @@ export class SipCore {
     }
 
     this.log('info', `Transport disconnected, attempting to reconnect (attempt ${this.reconnectAttempts + 1})`);
-    
+
     // Update worker state
     if (this.workerState) {
       this.workerState.setReconnection({
@@ -2034,7 +2035,7 @@ export class SipCore {
         lastReconnectAttempt: Date.now()
       });
     }
-    
+
     // Clear any existing reconnect timer
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -2060,7 +2061,7 @@ export class SipCore {
   private async attemptReconnection(): Promise<void> {
     try {
       this.log('info', `Attempting reconnection (attempt ${this.reconnectAttempts})`);
-      
+
       // Add safeguard: Stop after 100 attempts to prevent resource exhaustion
       if (this.reconnectAttempts > 100) {
         this.log('warn', 'Reconnection attempts exceeded 100, stopping to prevent resource exhaustion');
@@ -2068,7 +2069,7 @@ export class SipCore {
         this.stopReconnection();
         return;
       }
-      
+
       // Reset UserAgent if it exists
       if (this.userAgent) {
         try {
@@ -2081,7 +2082,7 @@ export class SipCore {
 
       // Reinitialize UserAgent
       this.initUserAgent();
-      
+
       if (!this.userAgent) {
         throw new Error('Failed to reinitialize UserAgent');
       }
@@ -2113,18 +2114,18 @@ export class SipCore {
     } catch (error: any) {
       this.log('error', `Reconnection attempt failed: ${error.message}`);
       this.isReconnecting = false;
-      
+
       // Apply exponential backoff for next attempt
       this.currentDelay = Math.min(this.currentDelay * this.backoffMultiplier, this.maxReconnectDelay);
       this.log('info', `Next reconnection attempt will be in ${this.currentDelay}ms`);
-      
+
       // Update worker state
       if (this.workerState) {
         this.workerState.setReconnection({
           isReconnecting: false
         });
       }
-      
+
       // Schedule next reconnection attempt
       this.handleTransportDisconnect();
     }
@@ -2142,7 +2143,7 @@ export class SipCore {
     this.reconnectAttempts = 0;
     this.currentDelay = this.reconnectDelay; // Reset to initial delay
     this.log('info', 'Reconnection attempts stopped');
-    
+
     // Update worker state
     if (this.workerState) {
       this.workerState.setReconnection({

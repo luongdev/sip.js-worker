@@ -160,7 +160,7 @@ export class SipWorkerClient {
       // Register ServiceWorker
       this.serviceWorkerRegistration = await navigator.serviceWorker.register(
         '/assets/scripts/sw.js',
-        { scope: '/' }
+        { scope: '/assets/scripts/' }
       );
 
       console.log('SIP Notifications ServiceWorker registered successfully');
@@ -693,6 +693,62 @@ export class SipWorkerClient {
         timestamp: Date.now()
       });
     });
+  }
+
+  /**
+   * Check if the current tab is handling media for any active call
+   * @returns Promise<boolean> True if this tab is handling media for an active call
+   */
+  private async isHandlingMediaForActiveCall(): Promise<boolean> {
+    try {
+      // Get current state from worker
+      const state = await this.getCurrentState(3000); // 3 second timeout
+
+      if (!state || !state.activeCalls || !Array.isArray(state.activeCalls)) {
+        return false;
+      }
+
+      // Check if any active call has this tab as the handling tab
+      const activeCall = state.activeCalls.find(call =>
+        call.handlingTabId === this.tabId &&
+        (call.state === 'established' || call.state === 'connecting' || call.state === 'ringing')
+      );
+
+      return !!activeCall;
+    } catch (error) {
+      console.warn('Failed to check if tab is handling media:', error);
+      return false; // Default to false to avoid blocking tab close
+    }
+  }
+
+  /**
+   * Public method to check if the current tab is handling media for any active call
+   * @returns Promise<boolean> True if this tab is handling media for an active call
+   */
+  public async isHandlingMedia(): Promise<boolean> {
+    return this.isHandlingMediaForActiveCall();
+  }
+
+  /**
+   * Get information about the call being handled by this tab (if any)
+   * @returns Promise<CallInfo | null> Call information or null if not handling any call
+   */
+  public async getHandledCallInfo(): Promise<SipWorker.CallInfo | null> {
+    try {
+      const state = await this.getCurrentState(3000);
+
+      if (!state || !state.activeCalls || !Array.isArray(state.activeCalls)) {
+        return null;
+      }
+
+      return state.activeCalls.find(call =>
+        call.handlingTabId === this.tabId &&
+        (call.state === 'established' || call.state === 'connecting' || call.state === 'ringing')
+      ) || null;
+    } catch (error) {
+      console.warn('Failed to get handled call info:', error);
+      return null;
+    }
   }
 
   /**
