@@ -6,10 +6,20 @@
 // Listen for messages from clients
 self.addEventListener('message', (event) => {
   const { data, source } = event;
-  
+
   if (data.type === 'REGISTER_FOR_NOTIFICATIONS') {
     console.log('ServiceWorker: Tab registered for notifications');
     // Can store client reference if needed
+  }
+
+  // Keep-alive ping from client to prevent termination
+  if (data.type === 'KEEP_ALIVE') {
+    console.log('ServiceWorker: Keep-alive ping received');
+    // Respond to confirm we're still active
+    event.ports[0]?.postMessage({
+      type: 'KEEP_ALIVE_RESPONSE',
+      timestamp: Date.now()
+    });
   }
 });
 
@@ -19,9 +29,9 @@ const notificationChannel = new BroadcastChannel('sip-notifications');
 // Listen for notification requests from SharedWorker
 notificationChannel.addEventListener('message', async (event) => {
   const { type, callId, callerInfo, timestamp, url } = event.data;
-  
+
   console.log('ServiceWorker: Received message from SharedWorker:', event.data);
-  
+
   if (type === 'SHOW_CALL_NOTIFICATION') {
     await showCallNotification(callId, callerInfo, url);
   }
@@ -42,30 +52,30 @@ async function showCallNotification(callId, callerInfo, url) {
           title: 'Answer',
           icon: '/icons/answer-icon-32.png'
         },
-        {
-          action: 'reject', 
-          title: 'Reject',
-          icon: '/icons/reject-icon-32.png'
-        }
+        // {
+        //   action: 'reject',
+        //   title: 'Reject',
+        //   icon: '/icons/reject-icon-32.png'
+        // }
       ],
       requireInteraction: true, // Don't auto-dismiss
       tag: `sip-call-${callId}`, // Replace previous notifications with same tag
-      data: { 
+      data: {
         url,
-        callId, 
+        callId,
         callerInfo,
-        timestamp: Date.now() 
+        timestamp: Date.now()
       },
       vibrate: [200, 100, 200, 100, 200], // Vibration pattern for mobile
       silent: false,
       renotify: true // Show notification even if same tag exists
     };
-    
+
     const registration = await self.registration;
     await registration.showNotification('Incoming SIP Call', notificationOptions);
-    
+
     console.log(`ServiceWorker: Notification shown for call ${callId}`);
-    
+
   } catch (error) {
     console.error('ServiceWorker: Failed to show notification:', error);
   }
@@ -79,72 +89,72 @@ self.addEventListener('notificationclick', async (event) => {
   console.log('Event action:', event.action);
   console.log('Event notification:', event.notification);
   console.log('Event notification data:', event.notification.data);
-  
+
   event.notification.close();
-  
+
   // If user clicked notification body (not button), default to answer
   let action = event.action || 'answer';
   const { callId, callerInfo, url } = event.notification.data;
-  
+
   console.log('Final action:', action, 'callId:', callId);
-  
-     event.waitUntil(
-     clients.matchAll({ type: 'window', includeUncontrolled: true })
-       .then(async clientList => {
-         console.log('Open clients:', clientList.map(client => client.url));
-         
-         let targetClient = null;
-         
-         // Try to focus existing client
-         for (const client of clientList) {
-           if ('focus' in client) {
-             try {
-               await client.focus();
-               targetClient = client;
-               break;
-             } catch (error) {
-               console.error('Error focusing client:', error);
-             }
-           }
-         }
-         
-         // Open new window if no existing client
-         if (!targetClient && clients.openWindow) {
-           targetClient = await clients.openWindow(url);
-         }
-         
-         // Send action ONLY to SharedWorker via BroadcastChannel
-         // Use different message type to avoid conflict with client
-         notificationChannel.postMessage({
-           type: 'SW_NOTIFICATION_ACTION',
-           action,
-           callId,
-           timestamp: Date.now()
-         });
-         
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(async clientList => {
+        console.log('Open clients:', clientList.map(client => client.url));
+
+        let targetClient = null;
+
+        // Try to focus existing client
+        for (const client of clientList) {
+          if ('focus' in client) {
+            try {
+              await client.focus();
+              targetClient = client;
+              break;
+            } catch (error) {
+              console.error('Error focusing client:', error);
+            }
+          }
+        }
+
+        // Open new window if no existing client
+        if (!targetClient && clients.openWindow) {
+          targetClient = await clients.openWindow(url);
+        }
+
+        // Send action ONLY to SharedWorker via BroadcastChannel
+        // Use different message type to avoid conflict with client
+        notificationChannel.postMessage({
+          type: 'SW_NOTIFICATION_ACTION',
+          action,
+          callId,
+          timestamp: Date.now()
+        });
+
         //  setTimeout(() => {
-           notificationChannel.postMessage({
-             type: 'REQUEST_STATE_SYNC',
-             callId,
-             reason: 'notification_action_processed',
-             timestamp: Date.now()
-           });
+        notificationChannel.postMessage({
+          type: 'REQUEST_STATE_SYNC',
+          callId,
+          reason: 'notification_action_processed',
+          timestamp: Date.now()
+        });
         //  }, 200); // 200ms delay for action processing
-         
-         // Optional: Send to client only for UI feedback (don't process action)
-         if (targetClient) {
-           targetClient.postMessage({
-             type: 'NOTIFICATION_UI_FEEDBACK',
-             action,
-             callId,
-             callerInfo
-           });
-         }
-         
-         console.log(`ServiceWorker: Sent action '${action}' for call ${callId}`);
-       })
-       .catch(err => console.error('Error in notificationclick handler:', err))
-   );
+
+        // Optional: Send to client only for UI feedback (don't process action)
+        if (targetClient) {
+          targetClient.postMessage({
+            type: 'NOTIFICATION_UI_FEEDBACK',
+            action,
+            callId,
+            callerInfo
+          });
+        }
+
+        console.log(`ServiceWorker: Sent action '${action}' for call ${callId}`);
+      })
+      .catch(err => console.error('Error in notificationclick handler:', err))
+  );
 
 });
 
@@ -173,6 +183,17 @@ self.addEventListener('install', (event) => {
 });
 
 /**
+ * Lightweight wake endpoint to ensure the ServiceWorker is active
+ * Pages can fetch /assets/scripts/__sw_wakeup__ to wake the SW on demand
+ */
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname.endsWith('/__sw_wakeup__')) {
+    event.respondWith(new Response('ok', { headers: { 'content-type': 'text/plain' } }));
+  }
+});
+
+/**
  * Background sync for maintaining notifications (optional)
  */
 self.addEventListener('sync', (event) => {
@@ -186,7 +207,7 @@ async function syncNotificationState() {
     // Could sync with server or clean up old notifications
     const notifications = await self.registration.getNotifications();
     console.log(`ServiceWorker: Found ${notifications.length} active notifications`);
-    
+
     // Close notifications older than 30 seconds
     const now = Date.now();
     notifications.forEach(notification => {
@@ -196,7 +217,7 @@ async function syncNotificationState() {
         console.log(`ServiceWorker: Closed old notification for call ${notification.data?.callId}`);
       }
     });
-    
+
   } catch (error) {
     console.error('ServiceWorker: Error syncing notification state:', error);
   }

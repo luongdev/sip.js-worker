@@ -160,10 +160,60 @@ export class SipWorkerClient {
       // Register ServiceWorker
       this.serviceWorkerRegistration = await navigator.serviceWorker.register(
         '/assets/scripts/sw.js',
-        { scope: '/assets/scripts/' }
+        { scope: '/assets/scripts/', updateViaCache: 'none' }
       );
 
       console.log('SIP Notifications ServiceWorker registered successfully');
+
+      // FIX: Handle Service Worker lifecycle properly
+      const installingWorker = this.serviceWorkerRegistration.installing;
+      const waitingWorker = this.serviceWorkerRegistration.waiting;
+      const activeWorker = this.serviceWorkerRegistration.active;
+
+      // Handle installing worker
+      if (installingWorker) {
+        installingWorker.addEventListener('statechange', (event) => {
+          const worker = event.target as ServiceWorker;
+          console.log('SW installing state:', worker.state);
+
+          if (worker.state === 'installed') {
+            if (waitingWorker) {
+              waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          } else if (worker.state === 'activated') {
+            this.setupServiceWorkerCommunication();
+          }
+        });
+      }
+
+      // Handle waiting worker
+      if (waitingWorker) {
+        waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      }
+
+      // If already active, setup communication immediately
+      if (activeWorker && !installingWorker && !waitingWorker) {
+        this.setupServiceWorkerCommunication();
+      }
+
+      // Handle future updates as well
+      this.serviceWorkerRegistration.addEventListener('updatefound', () => {
+        const sw = this.serviceWorkerRegistration?.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && this.serviceWorkerRegistration?.waiting) {
+            this.serviceWorkerRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+          if (sw.state === 'activated') {
+            this.setupServiceWorkerCommunication();
+          }
+        });
+      });
+
+      // If controller appears later (when page is in scope), wire comms
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        this.setupServiceWorkerCommunication();
+      });
 
       // Setup BroadcastChannel communication
       this.notificationChannel = new BroadcastChannel('sip-notifications');
@@ -184,6 +234,46 @@ export class SipWorkerClient {
       console.warn('Failed to initialize ServiceWorker notifications:', error);
       // Fallback to tab-based notifications if ServiceWorker fails
     }
+  }
+
+  /**
+   * Setup Service Worker communication after successful activation
+   */
+  private setupServiceWorkerCommunication(): void {
+    console.log('Service Worker activated and ready');
+
+    // Send registration confirmation to Service Worker
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'REGISTER_FOR_NOTIFICATIONS',
+        tabId: this.tabId,
+        timestamp: Date.now()
+      });
+    }
+
+    // Start keep-alive mechanism to prevent Service Worker termination
+    this.startServiceWorkerKeepAlive();
+  }
+
+  /**
+   * Keep Service Worker alive by sending periodic pings
+   */
+  private startServiceWorkerKeepAlive(): void {
+    // If host app injects an in-scope keepalive iframe, avoid duplicate pings
+    if (document.getElementById('sip-sw-keepalive')) { return; }
+
+    const pingOnly = () => {
+      try {
+        this.serviceWorkerRegistration?.active?.postMessage({
+          type: 'KEEP_ALIVE',
+          timestamp: Date.now()
+        });
+      } catch {}
+    };
+
+    const keepAliveInterval = setInterval(pingOnly, 25000);
+    (this as any).keepAliveInterval = keepAliveInterval;
+    setTimeout(pingOnly, 1000);
   }
 
   /**
@@ -1170,6 +1260,13 @@ export class SipWorkerClient {
     if (this.notificationChannel) {
       this.notificationChannel.close();
       this.notificationChannel = null;
+    }
+
+    // Cleanup keep-alive interval
+    if ((this as any).keepAliveInterval) {
+      clearInterval((this as any).keepAliveInterval);
+      (this as any).keepAliveInterval = null;
+      console.log('Service Worker keep-alive interval cleared');
     }
 
     this.connected = false;
