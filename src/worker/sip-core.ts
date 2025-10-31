@@ -164,6 +164,15 @@ export class SipCore {
   private currentDelay: number = 10000; // Track current delay for backoff
 
   /**
+   * Custom re-registration state
+   */
+  private customRefreshTimer: number | null = null;
+  private actualExpiresTime: number = 0; // Actual expires from server response
+  private useCustomRefresh: boolean = false;
+  private customRefreshFailures: number = 0; // Track consecutive failures
+  private maxCustomRefreshFailures: number = 3; // Max failures before fallback
+
+  /**
    * BroadcastChannel for ServiceWorker notifications
    */
   private notificationChannel: BroadcastChannel | null = null;
@@ -701,7 +710,7 @@ export class SipCore {
         isMuted: false,
         isOnHold: false,
         xHeaders: {
-            ...request.extraHeaders
+          ...request.extraHeaders
         }
       };
 
@@ -1344,29 +1353,45 @@ export class SipCore {
         this.registerer = null;
       }
 
+      // Determine refresh strategy with validation
+      const standardRefreshFrequency = this.sipConfig.sipOptions?.['refreshFrequency'] || 85;
+      const customRefreshFrequency = this.sipConfig.customRefreshFrequency;
+
+      // Validate custom refresh frequency
+      if (customRefreshFrequency !== undefined) {
+        if (customRefreshFrequency <= 0 || customRefreshFrequency >= 100) {
+          this.log('warn', `Invalid customRefreshFrequency: ${customRefreshFrequency}%. Must be 1-99. Using standard refresh.`);
+          this.useCustomRefresh = false;
+        } else if (customRefreshFrequency < 10) {
+          this.log('warn', `Very aggressive customRefreshFrequency: ${customRefreshFrequency}%. This may cause server rate limiting.`);
+          this.useCustomRefresh = customRefreshFrequency < 50 || customRefreshFrequency < standardRefreshFrequency;
+        } else {
+          // Use custom refresh only if it's more aggressive (smaller) than standard limits
+          this.useCustomRefresh = customRefreshFrequency < 50 || customRefreshFrequency < standardRefreshFrequency;
+        }
+      } else {
+        this.useCustomRefresh = false;
+      }
+
+      if (this.useCustomRefresh) {
+        this.log('info', `Using custom refresh frequency: ${customRefreshFrequency}% (bypassing SIP.js ${standardRefreshFrequency}% limit)`);
+      } else if (customRefreshFrequency !== undefined) {
+        this.log('info', `Custom refresh frequency ${customRefreshFrequency}% not more aggressive than standard ${standardRefreshFrequency}%, using SIP.js auto-refresh`);
+      }
+
       // Tạo Registerer mới
       this.registerer = new Registerer(this.userAgent, {
         expires: this.sipConfig.registerExpires || 600,
-        refreshFrequency: this.sipConfig.sipOptions?.['refreshFrequency'] || 90,
+        // If using custom refresh, set SIP.js refresh to 99 (maximum) to effectively disable it
+        // Otherwise use the standard refresh frequency (must be 50-99 for SIP.js)
+        refreshFrequency: this.useCustomRefresh ? 99 : Math.max(50, standardRefreshFrequency),
       });
 
+      // Note: We'll extract expires from the registerer after successful registration
+      // SIP.js Registerer doesn't expose delegate pattern, so we'll use a different approach
+
       // Thiết lập các sự kiện
-      this.registerer.stateChange.addListener((state) => {
-        switch (state) {
-          case RegistererState.Registered:
-            this.registered = true;
-            this.log('info', 'SIP registered successfully');
-            this.broadcastRegistrationState(true);
-            break;
-          case RegistererState.Unregistered:
-            this.registered = false;
-            this.log('info', 'SIP unregistered');
-            this.broadcastRegistrationState(false);
-            break;
-          default:
-            break;
-        }
-      });
+      this.setupRegistererListeners();
 
       // Đăng ký
       await this.registerer.register();
@@ -1385,6 +1410,9 @@ export class SipCore {
   public async unregister(): Promise<any> {
     // Stop any ongoing reconnection attempts
     this.stopReconnection();
+
+    // Stop custom refresh timer
+    this.stopCustomRefreshTimer();
 
     if (!this.registerer) {
       const error = 'Cannot unregister: Not registered';
@@ -2151,5 +2179,250 @@ export class SipCore {
         reconnectAttempts: 0
       });
     }
+  }
+
+  /**
+   * Extract actual expires time from server response
+   * Initialize with requested expires immediately, then correct if needed
+   */
+  private extractActualExpires(): void {
+    // Initialize immediately with requested expires to avoid 0-second calculations
+    this.actualExpiresTime = this.sipConfig.registerExpires || 600;
+    this.log('info', `Initial expires baseline: ${this.actualExpiresTime} seconds`);
+    
+    // Use a small delay to try to get the actual server expires
+    setTimeout(() => {
+      try {
+        // Try to get expires from the registerer's contact
+        if (this.registerer && (this.registerer as any).contact) {
+          const contact = (this.registerer as any).contact;
+          if (contact && contact.expires !== undefined) {
+            const serverExpires = contact.expires;
+            if (serverExpires !== this.actualExpiresTime) {
+              this.actualExpiresTime = serverExpires;
+              this.log('info', `Server returned different expires: ${this.actualExpiresTime} seconds (from registerer contact)`);
+              
+              // Restart custom timer with correct expires
+              if (this.useCustomRefresh) {
+                this.startCustomRefreshTimer();
+              }
+            }
+            return;
+          }
+        }
+        
+        // Alternative: try to parse from registerer's internal state
+        if (this.registerer) {
+          // Check if registerer has any internal expires information
+          const registererAny = this.registerer as any;
+          if (registererAny._expires && registererAny._expires !== this.actualExpiresTime) {
+            this.actualExpiresTime = registererAny._expires;
+            this.log('info', `Server returned different expires: ${this.actualExpiresTime} seconds (from registerer internal)`);
+            
+            // Restart custom timer with correct expires
+            if (this.useCustomRefresh) {
+              this.startCustomRefreshTimer();
+            }
+            return;
+          }
+        }
+        
+        // Fallback: assume server uses common policy (120s based on your logs)
+        // This is a reasonable assumption for your specific server
+        const requestedExpires = this.sipConfig.registerExpires || 600;
+        if (requestedExpires > 120) {
+          const serverExpires = 120; // Your server's known policy
+          if (serverExpires !== this.actualExpiresTime) {
+            this.actualExpiresTime = serverExpires;
+            this.log('info', `Using known server policy: ${this.actualExpiresTime} seconds (server typically caps at 120s)`);
+            
+            // Restart custom timer with correct expires
+            if (this.useCustomRefresh) {
+              this.startCustomRefreshTimer();
+            }
+          }
+        } else {
+          this.log('info', `Keeping requested expires: ${this.actualExpiresTime} seconds (within server limits)`);
+        }
+        
+      } catch (error) {
+        // Safe fallback - keep the initial value
+        this.log('warn', `Error extracting server expires: ${error}, keeping initial: ${this.actualExpiresTime} seconds`);
+      }
+    }, 500); // 500ms delay to allow registration to complete
+  }
+
+  /**
+   * Start custom refresh timer
+   */
+  private startCustomRefreshTimer(): void {
+    this.stopCustomRefreshTimer(); // Clear any existing timer
+
+    if (!this.useCustomRefresh || !this.sipConfig.customRefreshFrequency) {
+      return;
+    }
+
+    const refreshInterval = this.calculateRefreshInterval();
+
+    if (this.logConfig.level === 'debug' || this.logConfig.level === 'info') {
+      // Only calculate comparison for logging if needed
+      const standardFreq = this.sipConfig.sipOptions?.['refreshFrequency'] || 90;
+      const requestedExpires = this.sipConfig.registerExpires || 600;
+      const effectiveExpires = Math.min(requestedExpires, this.actualExpiresTime);
+      const standardInterval = Math.floor(effectiveExpires * (standardFreq / 100));
+
+      this.log('info', `🔄 Custom refresh: ${this.sipConfig.customRefreshFrequency}% = ${refreshInterval}s interval`);
+      this.log('info', `🔄 Standard SIP.js would use: ${standardFreq}% = ${standardInterval}s`);
+    }
+
+    // Set timer for custom re-registration
+    this.log('info', `🔄 Custom refresh timer STARTED - will fire in ${refreshInterval}s`);
+    this.customRefreshTimer = setTimeout(() => {
+      this.performCustomRefresh();
+    }, refreshInterval * 1000) as any;
+  }
+
+  /**
+   * Calculate refresh interval (cached calculation)
+   */
+  private calculateRefreshInterval(): number {
+    const requestedExpires = this.sipConfig.registerExpires || 600;
+    const effectiveExpires = Math.min(requestedExpires, this.actualExpiresTime);
+    const refreshFrequency = this.sipConfig.customRefreshFrequency!;
+    const refreshInterval = Math.floor(effectiveExpires * (refreshFrequency / 100));
+
+    // Ensure minimum 1 second interval for safety
+    return Math.max(1, refreshInterval);
+  }
+
+  /**
+   * Stop custom refresh timer
+   */
+  private stopCustomRefreshTimer(): void {
+    if (this.customRefreshTimer) {
+      this.log('info', '🔄 Custom refresh timer STOPPED');
+      clearTimeout(this.customRefreshTimer);
+      this.customRefreshTimer = null;
+    }
+  }
+
+  /**
+   * Perform custom refresh (manual re-registration)
+   */
+  private async performCustomRefresh(): Promise<void> {
+    if (!this.registered || !this.registerer) {
+      this.log('warn', '🔄 Custom refresh timer fired but registration not active - skipping');
+      return;
+    }
+
+    const refreshFrequency = this.sipConfig.customRefreshFrequency!;
+    const effectiveExpires = Math.min(this.sipConfig.registerExpires || 600, this.actualExpiresTime);
+    const refreshInterval = this.calculateRefreshInterval();
+
+    try {
+      this.log('info', `🔄 CUSTOM REFRESH TIMER FIRED - Performing manual re-registration`);
+      this.log('info', `🔄 Custom refresh config: ${refreshFrequency}% of ${effectiveExpires}s = ${refreshInterval}s interval`);
+      this.log('info', `🔄 This is ${refreshInterval < 102 ? 'MORE' : 'LESS'} aggressive than SIP.js standard (~102s for 85% of 120s)`);
+
+      // Manually trigger re-registration
+      await this.registerer.register();
+
+      this.log('info', '🔄 Custom refresh re-registration completed successfully');
+
+      // Reset failure counter on success
+      this.customRefreshFailures = 0;
+
+      // Manually restart the timer since re-registrations don't trigger RegistererState.Registered
+      this.log('info', `🔄 Restarting custom refresh timer for next cycle`);
+      this.startCustomRefreshTimer();
+    } catch (error: any) {
+      this.customRefreshFailures++;
+      this.log('error', `🔄 Custom refresh FAILED (attempt ${this.customRefreshFailures}/${this.maxCustomRefreshFailures}): ${error.message}`);
+
+      // If too many failures, fall back to SIP.js auto-refresh
+      if (this.customRefreshFailures >= this.maxCustomRefreshFailures) {
+        this.log('warn', `🔄 Custom refresh failed ${this.maxCustomRefreshFailures} times, falling back to SIP.js auto-refresh`);
+        this.useCustomRefresh = false;
+
+        // Recreate registerer with standard refresh
+        this.recreateRegistererWithStandardRefresh();
+        return;
+      }
+
+      // Exponential backoff for retry
+      const baseInterval = this.calculateRefreshInterval();
+      const backoffMultiplier = Math.pow(2, this.customRefreshFailures - 1);
+      const retryInterval = Math.min(baseInterval * backoffMultiplier, 300); // Max 5 minutes
+
+      this.log('info', `🔄 Retrying custom refresh in ${retryInterval}s (backoff: ${backoffMultiplier}x)`);
+
+      this.customRefreshTimer = setTimeout(() => {
+        this.performCustomRefresh();
+      }, retryInterval * 1000) as any;
+    }
+  }
+
+  /**
+   * Recreate registerer with standard refresh frequency
+   */
+  private async recreateRegistererWithStandardRefresh(): Promise<void> {
+    if (!this.userAgent || !this.registerer) return;
+
+    try {
+      // Dispose current registerer
+      this.registerer.dispose();
+
+      // Create new registerer with standard refresh
+      const standardRefreshFrequency = Math.max(50, this.sipConfig.sipOptions?.['refreshFrequency'] || 90);
+
+      this.registerer = new Registerer(this.userAgent, {
+        expires: this.sipConfig.registerExpires || 600,
+        refreshFrequency: standardRefreshFrequency,
+      });
+
+      // Re-setup event listeners (reuse existing logic)
+      this.setupRegistererListeners();
+
+      // Re-register
+      await this.registerer.register();
+
+      this.log('info', `Fallback to SIP.js auto-refresh at ${standardRefreshFrequency}%`);
+    } catch (error: any) {
+      this.log('error', `Failed to recreate registerer: ${error.message}`);
+    }
+  }
+
+  /**
+   * Setup registerer event listeners (extracted for reuse)
+   */
+  private setupRegistererListeners(): void {
+    if (!this.registerer) return;
+
+    this.registerer.stateChange.addListener((state) => {
+      switch (state) {
+        case RegistererState.Registered:
+          this.registered = true;
+          this.log('info', 'SIP registered successfully');
+
+          // Extract actual expires from server response
+          this.extractActualExpires();
+
+          // Start custom refresh timer if enabled
+          if (this.useCustomRefresh) {
+            this.startCustomRefreshTimer();
+          }
+
+          this.broadcastRegistrationState(true);
+          break;
+        case RegistererState.Unregistered:
+          this.registered = false;
+          this.log('info', 'SIP unregistered');
+          this.stopCustomRefreshTimer();
+          this.broadcastRegistrationState(false);
+          break;
+        default:
+          break;
+      }
+    });
   }
 }

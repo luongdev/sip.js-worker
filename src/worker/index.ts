@@ -30,7 +30,7 @@ const defaultConfig: SipCoreOptions = {
     username: '',
     password: '',
     displayName: '',
-    registerExpires: 600
+    registerExpires: 120  // Match server minimum or use 300-600 for better efficiency
   },
   transportConfig: {
     server: '',
@@ -92,9 +92,9 @@ function registerMessageHandlers() {
       timestamp: Date.now(),
       data: currentState
     }).catch(
-        (error) => {
-            console.error('Failed to send state sync message:', error);
-        }
+      (error) => {
+        console.error('Failed to send state sync message:', error);
+      }
     )
 
     return { success: true, message: 'State synced' };
@@ -105,10 +105,18 @@ function registerMessageHandlers() {
 
     if (!sipCore) {
       // Khởi tạo SipCore nếu chưa có
+      // Ensure registerExpires meets server minimum
+      const clientSipConfig = data.sipConfig || {};
+      const registerExpires = Math.max(
+        clientSipConfig.registerExpires || defaultConfig.sipConfig.registerExpires || 300,
+        120  // Server minimum
+      );
+
       const options: SipCoreOptions = {
         sipConfig: {
           ...defaultConfig.sipConfig,
-          ...(data.sipConfig || {})
+          ...clientSipConfig,
+          registerExpires
         },
         transportConfig: {
           ...defaultConfig.transportConfig,

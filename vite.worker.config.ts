@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         fileName: () => `sip-worker.worker.js`,
       },
       rollupOptions: {
+        // external: ['sip.js'],
         output: {
           globals: {
             'sip.js': 'SIP'

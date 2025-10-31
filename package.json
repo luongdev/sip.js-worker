@@ -7,7 +7,7 @@
   "types": "dist/types/index.d.ts",
   "files": [
     "dist",
-    "public/sw.js",
+    "public",
     "README.md",
     "LICENSE"
   ],
@@ -21,6 +21,7 @@
     "build:obfuscated": "npm run build:prod && npm run obfuscate",
     "obfuscate": "node scripts/obfuscate.cjs",
     "restore": "node scripts/obfuscate.cjs restore",
+    "prepare": "npm run build:prod",
     "preview": "vite preview",
     "prepublishOnly": "npm run build:obfuscated"
   },
