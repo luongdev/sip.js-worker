@@ -206,7 +206,9 @@ export class SipCore {
         const { type } = event.data;
 
         if (type === 'SW_NOTIFICATION_ACTION') {
-          this.handleNotificationAction(event.data);
+          this.handleNotificationAction(event.data).catch(err => {
+            this.log('error', `Error handling notification action: ${err.message}`);
+          });
         } else if (type === 'REQUEST_STATE_SYNC') {
           this.log('info', `ServiceWorker requested state sync: ${event.data.reason}`);
           this.messageBroker.broadcast({
@@ -467,7 +469,9 @@ export class SipCore {
         this.handleTransportDisconnect();
       },
       onInvite: (invitation) => {
-        this.handleIncomingCall(invitation);
+        this.handleIncomingCall(invitation).catch(err => {
+          this.log('error', `Error handling incoming call: ${err.message}`);
+        });
       }
     };
 
@@ -510,7 +514,7 @@ export class SipCore {
   /**
    * Handle notification actions from ServiceWorker
    */
-  private handleNotificationAction(data: any): void {
+  private async handleNotificationAction(data: any): Promise<void> {
     const { type, action, callId } = data;
 
     if (type === 'SW_NOTIFICATION_ACTION') {
@@ -518,10 +522,10 @@ export class SipCore {
 
       switch (action) {
         case 'answer':
-          this.acceptCall(callId);
+          await this.acceptCall(callId);
           break;
         case 'reject':
-          this.rejectCall(callId);
+          await this.rejectCall(callId);
           break;
         default:
           this.log('warn', `Unknown notification action: ${action}`);
@@ -556,13 +560,11 @@ export class SipCore {
    * Xử lý cuộc gọi đến
    * @param invitation Invitation từ SIP.js
    */
-  private handleIncomingCall(invitation: Invitation): void {
-    // Lấy Call-ID từ SIP header (chính xác)
+  private async handleIncomingCall(invitation: Invitation): Promise<void> {
     const callId = invitation.request.callId;
 
     this.log('info', `Incoming call received: ${callId} from ${invitation.remoteIdentity.uri}`);
 
-    // Tạo thông tin cuộc gọi
     const callInfo: SipWorker.CallInfo = {
       id: callId,
       direction: SipWorker.CallDirection.INCOMING,
@@ -575,33 +577,29 @@ export class SipCore {
       xHeaders: Object.entries(invitation.request.headers)
         .filter(([name]) => name.startsWith('X-'))
         .reduce((acc, [name, values]) => {
-          // For each X- header, take the raw value of the first entry
           acc[name] = values[0]?.raw || '';
           return acc;
         }, {} as Record<string, string>),
-      // handlingTabId will be set by WorkerSessionDescriptionHandler when tab is selected during accept()
     };
 
-    // Lưu cuộc gọi vào danh sách
     this.activeCalls.set(callId, invitation);
-
-    // Thiết lập event listeners cho invitation
     this.setupInvitationListeners(invitation, callInfo);
 
-    // Update WorkerState với incoming call
     if (this.workerState) {
       this.workerState.setActiveCall(callId, callInfo);
     }
 
-    // Broadcast thông báo cuộc gọi đến
-    this.messageBroker.broadcast({
+    const selectedTabId = await this.tabManager.selectBestTab();
+    await this.messageBroker.broadcast({
       type: SipWorker.MessageType.CALL_INCOMING,
       id: `incoming-call-${Date.now()}`,
       timestamp: Date.now(),
-      data: callInfo
+      data: {
+        ...callInfo,
+        selectedTabId,
+      },
     });
 
-    // Check if all tabs are hidden and send notification to ServiceWorker
     const allTabs = this.tabManager.getAllTabs();
     const visibleTabs = allTabs.filter(tab =>
       tab.state === SipWorker.TabState.ACTIVE || tab.state === SipWorker.TabState.VISIBLE
@@ -612,10 +610,9 @@ export class SipCore {
       this.sendNotificationToServiceWorker(callInfo);
     }
 
-    // Nếu có auto accept, tự động chấp nhận cuộc gọi
     if (this.autoAcceptCalls) {
       this.log('info', `Auto-accepting incoming call: ${callId}`);
-      this.acceptCall(callId);
+      await this.acceptCall(callId);
     }
   }
 
@@ -971,7 +968,6 @@ export class SipCore {
 
       this.log('info', `Hanging up call: ${callId}`);
 
-      // Kết thúc session
       if (session.state === SessionState.Established) {
         await session.bye();
       } else if (session.state === SessionState.Establishing) {
@@ -986,11 +982,9 @@ export class SipCore {
         }
       }
 
-      // Cleanup
       this.activeCalls.delete(callId);
 
-      // Broadcast call terminated event
-      this.messageBroker.broadcast({
+      await this.messageBroker.broadcast({
         type: SipWorker.MessageType.CALL_TERMINATED,
         id: `call-terminated-${Date.now()}`,
         timestamp: Date.now(),
@@ -2189,7 +2183,7 @@ export class SipCore {
     // Initialize immediately with requested expires to avoid 0-second calculations
     this.actualExpiresTime = this.sipConfig.registerExpires || 600;
     this.log('info', `Initial expires baseline: ${this.actualExpiresTime} seconds`);
-    
+
     // Use a small delay to try to get the actual server expires
     setTimeout(() => {
       try {
@@ -2201,7 +2195,7 @@ export class SipCore {
             if (serverExpires !== this.actualExpiresTime) {
               this.actualExpiresTime = serverExpires;
               this.log('info', `Server returned different expires: ${this.actualExpiresTime} seconds (from registerer contact)`);
-              
+
               // Restart custom timer with correct expires
               if (this.useCustomRefresh) {
                 this.startCustomRefreshTimer();
@@ -2210,7 +2204,7 @@ export class SipCore {
             return;
           }
         }
-        
+
         // Alternative: try to parse from registerer's internal state
         if (this.registerer) {
           // Check if registerer has any internal expires information
@@ -2218,7 +2212,7 @@ export class SipCore {
           if (registererAny._expires && registererAny._expires !== this.actualExpiresTime) {
             this.actualExpiresTime = registererAny._expires;
             this.log('info', `Server returned different expires: ${this.actualExpiresTime} seconds (from registerer internal)`);
-            
+
             // Restart custom timer with correct expires
             if (this.useCustomRefresh) {
               this.startCustomRefreshTimer();
@@ -2226,7 +2220,7 @@ export class SipCore {
             return;
           }
         }
-        
+
         // Fallback: assume server uses common policy (120s based on your logs)
         // This is a reasonable assumption for your specific server
         const requestedExpires = this.sipConfig.registerExpires || 600;
@@ -2235,7 +2229,7 @@ export class SipCore {
           if (serverExpires !== this.actualExpiresTime) {
             this.actualExpiresTime = serverExpires;
             this.log('info', `Using known server policy: ${this.actualExpiresTime} seconds (server typically caps at 120s)`);
-            
+
             // Restart custom timer with correct expires
             if (this.useCustomRefresh) {
               this.startCustomRefreshTimer();
@@ -2244,7 +2238,7 @@ export class SipCore {
         } else {
           this.log('info', `Keeping requested expires: ${this.actualExpiresTime} seconds (within server limits)`);
         }
-        
+
       } catch (error) {
         // Safe fallback - keep the initial value
         this.log('warn', `Error extracting server expires: ${error}, keeping initial: ${this.actualExpiresTime} seconds`);
