@@ -7,6 +7,11 @@ export interface SipWorkerClientOptions {
   tabId?: string;
   workerPath?: string;
   type?: ('classic' | 'module');
+  /**
+   * Enable automatic tab close protection (default: true)
+   * Shows confirmation dialog when closing tab with active call
+   */
+  enableTabCloseProtection?: boolean;
 }
 
 /**
@@ -144,6 +149,47 @@ export class SipWorkerClient {
 
     // New: Khởi tạo ServiceWorker cho notifications
     this.initServiceWorkerNotifications();
+    
+    // Automatic tab close protection setup (enabled by default)
+    if (options?.enableTabCloseProtection !== false) {
+      this.setupAutomaticTabCloseProtection();
+    }
+  }
+  
+  /**
+   * Setup automatic tab close protection
+   * Enables protection and tracks call state automatically
+   */
+  private setupAutomaticTabCloseProtection(): void {
+    // Enable protection
+    this.enableTabCloseProtection();
+    
+    // Initialize flag
+    (this as any)._hasActiveCall = false;
+    
+    // Track call state automatically
+    this.on(SipWorker.MessageType.CALL_PROGRESS, (message) => {
+      const callInfo = message.data;
+      if (callInfo) {
+        const isActive = callInfo.state === SipWorker.CallState.ESTABLISHED || 
+                         callInfo.state === SipWorker.CallState.CONNECTING || 
+                         callInfo.state === SipWorker.CallState.RINGING;
+        
+        (this as any)._hasActiveCall = isActive;
+        
+        if (isActive) {
+          console.log(`Tab close protection ACTIVE (call ${callInfo.state})`);
+        }
+      }
+    });
+    
+    // Clear flag when call ends
+    this.on(SipWorker.MessageType.CALL_TERMINATED, () => {
+      (this as any)._hasActiveCall = false;
+      console.log('Tab close protection INACTIVE (call ended)');
+    });
+    
+    console.log('Automatic tab close protection configured');
   }
 
   /**
@@ -774,14 +820,31 @@ export class SipWorkerClient {
     window.addEventListener('focus', debouncedUpdate);
     window.addEventListener('blur', debouncedUpdate);
 
-    // Cleanup khi unload
-    window.addEventListener('beforeunload', () => {
+    // Cleanup on actual unload (not beforeunload)
+    // beforeunload fires when dialog shows, but user might cancel
+    // unload only fires when page actually closes
+    window.addEventListener('unload', () => {
       this.sendMessage({
         type: SipWorker.MessageType.TAB_UNREGISTER,
         id: `unregister-${Date.now()}`,
         tabId: this.tabId,
         timestamp: Date.now()
       });
+    });
+    
+    // Re-register if page becomes visible again after close attempt
+    // This handles the case where user cancels the close dialog
+    let closeAttempted = false;
+    window.addEventListener('beforeunload', () => {
+      closeAttempted = true;
+      // Check after a short delay if we're still here
+      setTimeout(() => {
+        if (closeAttempted && document.visibilityState === 'visible') {
+          console.log('Tab close was cancelled - re-registering');
+          closeAttempted = false;
+          this.registerTab();
+        }
+      }, 50); // 50ms - very fast re-registration
     });
   }
 
@@ -1247,6 +1310,55 @@ export class SipWorkerClient {
   }
 
   /**
+   * Enable tab close protection - shows confirmation dialog when closing tab with active call
+   * Call this method to enable the protection, typically after initializing the client
+   */
+  public enableTabCloseProtection(): void {
+    // Prevent duplicate handlers
+    if ((this as any).beforeUnloadHandler) {
+      console.log('Tab close protection already enabled, skipping');
+      return;
+    }
+    
+    // Store reference to handler for cleanup
+    const beforeUnloadHandler = (event: BeforeUnloadEvent): string | undefined => {
+      console.log('beforeunload event triggered - checking for active call...');
+      
+      // IMPORTANT: beforeunload must be synchronous for the dialog to work
+      // We can't use async/await here, so we check a cached state
+      const hasActiveCall = (this as any)._hasActiveCall || false;
+      
+      console.log('Has active call (cached):', hasActiveCall);
+      
+      if (hasActiveCall) {
+        const message = 'You have an active call. Closing this tab will end the call.';
+        console.log('PREVENTING tab close - showing dialog');
+        event.preventDefault();
+        event.returnValue = message;
+        return message;
+      }
+      
+      console.log('No active call - allowing tab close');
+      return undefined;
+    };
+    
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    (this as any).beforeUnloadHandler = beforeUnloadHandler;
+    console.log('Tab close protection enabled');
+  }
+
+  /**
+   * Disable tab close protection
+   */
+  public disableTabCloseProtection(): void {
+    if ((this as any).beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', (this as any).beforeUnloadHandler);
+      (this as any).beforeUnloadHandler = null;
+      console.log('Tab close protection disabled');
+    }
+  }
+
+  /**
    * Cleanup resources
    */
   public cleanup(): void {
@@ -1268,6 +1380,9 @@ export class SipWorkerClient {
       (this as any).keepAliveInterval = null;
       console.log('Service Worker keep-alive interval cleared');
     }
+
+    // Cleanup tab close protection
+    this.disableTabCloseProtection();
 
     this.connected = false;
     console.log('SipWorkerClient cleaned up');

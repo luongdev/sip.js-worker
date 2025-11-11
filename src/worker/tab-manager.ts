@@ -19,6 +19,11 @@ export interface TabManagerOptions {
    * Thời gian chờ tối đa để chọn tab xử lý cuộc gọi (ms)
    */
   tabSelectionTimeout?: number;
+
+  /**
+   * Callback được gọi khi cần hangup call do tab đóng
+   */
+  onTabClosedWithCall?: (callId: string, reason: string) => Promise<void>;
 }
 
 /**
@@ -51,6 +56,11 @@ export class TabManager {
   private tabSelectionTimeout: number = 5000;
 
   /**
+   * Callback được gọi khi cần hangup call do tab đóng
+   */
+  private onTabClosedWithCall?: (callId: string, reason: string) => Promise<void>;
+
+  /**
    * Khởi tạo TabManager
    * @param messageBroker MessageBroker để giao tiếp với các tab
    * @param workerState WorkerState để lấy trạng thái hiện tại
@@ -62,6 +72,10 @@ export class TabManager {
 
     if (options?.tabSelectionTimeout !== undefined) {
       this.tabSelectionTimeout = options.tabSelectionTimeout;
+    }
+
+    if (options?.onTabClosedWithCall) {
+      this.onTabClosedWithCall = options.onTabClosedWithCall;
     }
 
     // Đăng ký các handler xử lý tin nhắn
@@ -146,6 +160,42 @@ export class TabManager {
     if (!this.tabs.has(tabId)) {
       console.warn(`Tab không tồn tại: ${tabId}`);
       return;
+    }
+    
+    // Check if this tab is handling any active calls
+    const activeCalls = this.workerState.getActiveCalls();
+    const handledCalls = activeCalls.filter(call => call.handlingTabId === tabId);
+    
+    if (handledCalls.length > 0) {
+      console.log(`Tab ${tabId} is handling ${handledCalls.length} active call(s)`);
+      console.log(`Waiting 5 seconds for user confirmation dialog...`);
+      
+      // Delay termination to allow user to respond to confirmation dialog
+      // If user cancels, tab stays open and will re-register
+      // If user confirms or force-closes, tab won't respond and calls will be terminated
+      setTimeout(() => {
+        // Check if tab is still gone (didn't re-register)
+        if (!this.tabs.has(tabId)) {
+          console.log(`Tab ${tabId} confirmed closed, terminating calls`);
+          
+          // Terminate calls directly via callback
+          handledCalls.forEach(async (call) => {
+            console.log(`Terminating call ${call.id} due to tab ${tabId} closing`);
+            
+            if (this.onTabClosedWithCall) {
+              try {
+                await this.onTabClosedWithCall(call.id, 'Tab closed');
+              } catch (error) {
+                console.error(`Failed to hangup call ${call.id}:`, error);
+              }
+            } else {
+              console.warn('No onTabClosedWithCall callback registered, call will not be terminated');
+            }
+          });
+        } else {
+          console.log(`Tab ${tabId} is still active, user cancelled close - keeping calls`);
+        }
+      }, 1000); // 1 second delay - enough for re-registration if user cancels
     }
     
     // Nếu tab đang được chọn, hủy chọn

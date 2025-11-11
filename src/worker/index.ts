@@ -17,11 +17,20 @@ const messageBroker = new MessageBroker();
 // Set WorkerState reference cho MessageBroker
 messageBroker.setWorkerState(workerState);
 
-// Khởi tạo TabManager
-const tabManager = new TabManager(messageBroker, workerState);
-
 // Biến lưu trữ SipCore
 let sipCore: SipCore | null = null;
+
+// Khởi tạo TabManager với callback để hangup calls khi tab đóng
+const tabManager = new TabManager(messageBroker, workerState, {
+  onTabClosedWithCall: async (callId: string, reason: string) => {
+    if (sipCore) {
+      console.log(`Auto-hanging up call ${callId} due to: ${reason}`);
+      await sipCore.hangupCall(callId);
+    } else {
+      console.error(`Cannot hangup call ${callId}: SipCore not initialized`);
+    }
+  }
+});
 
 // Cấu hình mặc định
 const defaultConfig: SipCoreOptions = {
@@ -183,8 +192,15 @@ function registerMessageHandlers() {
   // Handler cho tin nhắn CALL_HANGUP
   messageBroker.on(SipWorker.MessageType.CALL_HANGUP, async (message, tabId, port) => {
     if (sipCore) {
-      const request = message.data as { callId: string };
-      return await sipCore.hangupCall(request.callId);
+      const request = message.data as { callId: string; reason?: string };
+      const result = await sipCore.hangupCall(request.callId);
+      
+      // Log the reason if provided (e.g., "Tab closed")
+      if (request.reason) {
+        console.log(`Call ${request.callId} hangup reason: ${request.reason}`);
+      }
+      
+      return result;
     }
     return { success: false, error: 'SIP not initialized' };
   });
