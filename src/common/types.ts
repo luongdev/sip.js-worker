@@ -295,6 +295,23 @@ export namespace SipWorker {
      * Các tham số tùy chọn khác cho SIP.js
      */
     sipOptions?: Record<string, any>;
+
+    /**
+     * Variable name in X-Extra header to identify predict calls
+     * Example: 'extra_interact_card_id' - if this variable exists, it's a predict call
+     * Default: 'extra_interact_card_id'
+     */
+    predictCallExtraVariable?: string;
+
+    /**
+     * Có tự động chấp nhận cuộc gọi đến thông thường không
+     */
+    autoAcceptInboundCalls?: boolean;
+
+    /**
+     * Có tự động chấp nhận cuộc gọi predict không
+     */
+    autoAcceptPredictCalls?: boolean;
   }
 
   /**
@@ -397,9 +414,15 @@ export namespace SipWorker {
     autoRegister?: boolean;
 
     /**
-     * Có tự động chấp nhận cuộc gọi đến không
+     * Có tự động chấp nhận cuộc gọi đến thông thường không
      */
-    autoAcceptCalls?: boolean;
+    autoAcceptInboundCalls?: boolean;
+
+    /**
+     * Có tự động chấp nhận cuộc gọi predict không
+     * Predict calls are identified by extra headers (configured in SipConfig)
+     */
+    autoAcceptPredictCalls?: boolean;
 
     /**
      * Thời gian chờ tối đa để chọn tab xử lý cuộc gọi (ms)
@@ -412,9 +435,19 @@ export namespace SipWorker {
    */
   export interface SipUpdateConfigRequest {
     /**
-     * Có tự động chấp nhận cuộc gọi đến không
+     * Có tự động chấp nhận cuộc gọi đến thông thường không
      */
-    autoAcceptCalls?: boolean;
+    autoAcceptInboundCalls?: boolean;
+
+    /**
+     * Có tự động chấp nhận cuộc gọi predict không
+     */
+    autoAcceptPredictCalls?: boolean;
+
+    /**
+     * Variable name in X-Extra header to identify predict calls
+     */
+    predictCallExtraVariable?: string;
   }
 
   /**
@@ -723,6 +756,11 @@ export namespace SipWorker {
      * Các header tùy chọn
      */
     xHeaders?: Record<string, string>;
+
+    /**
+     * Có phải là cuộc gọi predict không
+     */
+    isPredictCall?: boolean;
   }
 
   /**

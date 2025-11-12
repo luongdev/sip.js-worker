@@ -57,9 +57,14 @@ export interface SipCoreOptions {
   autoRegister?: boolean;
 
   /**
-   * Có tự động chấp nhận cuộc gọi đến không
+   * Có tự động chấp nhận cuộc gọi đến thông thường không
    */
-  autoAcceptCalls?: boolean;
+  autoAcceptInboundCalls?: boolean;
+
+  /**
+   * Có tự động chấp nhận cuộc gọi predict không
+   */
+  autoAcceptPredictCalls?: boolean;
 }
 
 /**
@@ -137,9 +142,21 @@ export class SipCore {
   private autoRegister: boolean;
 
   /**
-   * Có tự động chấp nhận cuộc gọi đến không
+   * Có tự động chấp nhận cuộc gọi đến thông thường không
    */
-  private autoAcceptCalls: boolean;
+  private autoAcceptInboundCalls: boolean;
+
+  /**
+   * Có tự động chấp nhận cuộc gọi predict không
+   */
+  private autoAcceptPredictCalls: boolean;
+
+
+
+  /**
+   * Variable name in X-Extra header to identify predict calls
+   */
+  private predictCallExtraVariable: string;
 
   /**
    * Trạng thái đăng ký SIP
@@ -194,7 +211,9 @@ export class SipCore {
     };
     this.requestTimeout = options.requestTimeout || 30000;
     this.autoRegister = options.autoRegister !== undefined ? options.autoRegister : true;
-    this.autoAcceptCalls = options.autoAcceptCalls !== undefined ? options.autoAcceptCalls : false;
+    this.autoAcceptInboundCalls = options.autoAcceptInboundCalls !== undefined ? options.autoAcceptInboundCalls : false;
+    this.autoAcceptPredictCalls = options.autoAcceptPredictCalls !== undefined ? options.autoAcceptPredictCalls : false;
+    this.predictCallExtraVariable = options.sipConfig.predictCallExtraVariable || 'extra_interact_card_id';
 
     // Initialize BroadcastChannel for ServiceWorker notifications
     try {
@@ -373,10 +392,22 @@ export class SipCore {
    * Cập nhật cấu hình SIP
    * @param config Cấu hình mới
    */
-  public updateConfig(config: { autoAcceptCalls?: boolean }): void {
-    if (config.autoAcceptCalls !== undefined) {
-      this.autoAcceptCalls = config.autoAcceptCalls;
-      this.log('info', `Auto accept calls updated: ${this.autoAcceptCalls}`);
+  public updateConfig(config: {
+    autoAcceptInboundCalls?: boolean;
+    autoAcceptPredictCalls?: boolean;
+    predictCallExtraVariable?: string;
+  }): void {
+    if (config.autoAcceptInboundCalls !== undefined) {
+      this.autoAcceptInboundCalls = config.autoAcceptInboundCalls;
+      this.log('info', `Auto accept inbound calls updated: ${this.autoAcceptInboundCalls}`);
+    }
+    if (config.autoAcceptPredictCalls !== undefined) {
+      this.autoAcceptPredictCalls = config.autoAcceptPredictCalls;
+      this.log('info', `Auto accept predict calls updated: ${this.autoAcceptPredictCalls}`);
+    }
+    if (config.predictCallExtraVariable !== undefined) {
+      this.predictCallExtraVariable = config.predictCallExtraVariable;
+      this.log('info', `Predict call extra variable updated: ${this.predictCallExtraVariable}`);
     }
   }
 
@@ -565,6 +596,17 @@ export class SipCore {
 
     this.log('info', `Incoming call received: ${callId} from ${invitation.remoteIdentity.uri}`);
 
+    // Extract X-Headers
+    const xHeaders = Object.entries(invitation.request.headers)
+      .filter(([name]) => name.startsWith('X-'))
+      .reduce((acc, [name, values]) => {
+        acc[name] = values[0]?.raw || '';
+        return acc;
+      }, {} as Record<string, string>);
+
+    // Determine if this is a predict call
+    const isPredictCall = this.isPredictCall(xHeaders);
+
     const callInfo: SipWorker.CallInfo = {
       id: callId,
       direction: SipWorker.CallDirection.INCOMING,
@@ -574,13 +616,11 @@ export class SipCore {
       startTime: Date.now(),
       isMuted: false,
       isOnHold: false,
-      xHeaders: Object.entries(invitation.request.headers)
-        .filter(([name]) => name.startsWith('X-'))
-        .reduce((acc, [name, values]) => {
-          acc[name] = values[0]?.raw || '';
-          return acc;
-        }, {} as Record<string, string>),
+      xHeaders,
+      isPredictCall,
     };
+
+    this.log('info', `Call type: ${isPredictCall ? 'PREDICT' : 'INBOUND'}`);
 
     this.activeCalls.set(callId, invitation);
     this.setupInvitationListeners(invitation, callInfo);
@@ -589,6 +629,16 @@ export class SipCore {
       this.workerState.setActiveCall(callId, callInfo);
     }
 
+    // Determine if we should auto-accept this call
+    const shouldAutoAccept = isPredictCall ? this.autoAcceptPredictCalls : this.autoAcceptInboundCalls;
+
+    if (shouldAutoAccept) {
+      this.log('info', `Auto-accepting ${isPredictCall ? 'predict' : 'inbound'} call: ${callId}`);
+      await this.acceptCall(callId);
+      return; // Skip broadcasting and notifications for auto-accepted calls
+    }
+
+    // Only broadcast and send notifications if not auto-accepting
     const selectedTabId = await this.tabManager.selectBestTab();
     await this.messageBroker.broadcast({
       type: SipWorker.MessageType.CALL_INCOMING,
@@ -609,10 +659,56 @@ export class SipCore {
       this.log('info', `All tabs are hidden, sending notification to ServiceWorker for call: ${callId}`);
       this.sendNotificationToServiceWorker(callInfo);
     }
+  }
 
-    if (this.autoAcceptCalls) {
-      this.log('info', `Auto-accepting incoming call: ${callId}`);
-      await this.acceptCall(callId);
+  /**
+   * Check if incoming call is a predict call based on X-Extra header
+   * @param xHeaders X-Headers from the invitation
+   * @returns true if this is a predict call
+   */
+  private isPredictCall(xHeaders: Record<string, string>): boolean {
+    // Get X-Extra header (case-insensitive)
+    const extraRaw = xHeaders['X-Extra'] ?? xHeaders['x-extra'];
+
+    if (!extraRaw) {
+      return false;
+    }
+
+    // Parse X-Extra header to find the variable
+    // Format: "variable1=value1;variable2=value2;..."
+    const extraValue = this.getValueFromExtraVariables(extraRaw, this.predictCallExtraVariable);
+
+    // If the variable exists and has a value, it's a predict call
+    return !!extraValue;
+  }
+
+  /**
+   * Extract value from X-Extra header variables
+   * @param extra X-Extra header value
+   * @param variableName Variable name to extract
+   * @returns Variable value or null
+   */
+  private getValueFromExtraVariables(extra: string, variableName: string): string | null {
+    if (!extra || !variableName) {
+      return null;
+    }
+
+    try {
+      // Split by semicolon to get individual variables
+      const variables = extra.split(';');
+
+      for (const variable of variables) {
+        const [key, value] = variable.split('=').map((s) => s.trim());
+
+        if (key && key.toLowerCase() === variableName.toLowerCase()) {
+          return value || null;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      this.log('warn', `Failed to parse X-Extra header: ${error}`);
+      return null;
     }
   }
 

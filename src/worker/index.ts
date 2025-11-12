@@ -39,24 +39,24 @@ const defaultConfig: SipCoreOptions = {
     username: '',
     password: '',
     displayName: '',
-    registerExpires: 120  // Match server minimum or use 300-600 for better efficiency
+    registerExpires: 120, // Match server minimum or use 300-600 for better efficiency
+    predictCallExtraVariable: 'extra_interact_card_id', // Variable in X-Extra header to identify predict calls
   },
   transportConfig: {
     server: '',
     secure: true,
     reconnectionTimeout: 5000,
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   },
   logConfig: {
     level: 'info',
     sendToClient: true,
-    console: true
+    console: true,
   },
   requestTimeout: 30000,
   autoRegister: false,
-  autoAcceptCalls: false
+  autoAcceptInboundCalls: false,
+  autoAcceptPredictCalls: false,
 };
 
 self.addEventListener('connect', (event: any) => {
@@ -125,16 +125,19 @@ function registerMessageHandlers() {
         sipConfig: {
           ...defaultConfig.sipConfig,
           ...clientSipConfig,
-          registerExpires
+          registerExpires,
         },
         transportConfig: {
           ...defaultConfig.transportConfig,
-          ...(data.transportConfig || {})
+          ...(data.transportConfig || {}),
         },
         logConfig: defaultConfig.logConfig,
         requestTimeout: defaultConfig.requestTimeout,
         autoRegister: false, // Không tự động đăng ký, sẽ gọi register sau
-        autoAcceptCalls: defaultConfig.autoAcceptCalls
+        autoAcceptInboundCalls:
+          clientSipConfig.autoAcceptInboundCalls ?? defaultConfig.autoAcceptInboundCalls,
+        autoAcceptPredictCalls:
+          clientSipConfig.autoAcceptPredictCalls ?? defaultConfig.autoAcceptPredictCalls,
       };
 
       sipCore = new SipCore(messageBroker, tabManager, options, workerState);
