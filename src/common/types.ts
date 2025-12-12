@@ -19,6 +19,7 @@ export namespace SipWorker {
     TAB_REGISTER = 'tab_register',           // Đăng ký tab mới
     TAB_UNREGISTER = 'tab_unregister',       // Hủy đăng ký tab
     TAB_UPDATE_STATE = 'tab_update_state',   // Cập nhật trạng thái tab (visible, active)
+    TAB_UPDATE_AUDIO_CONTEXT = 'tab_update_audio_context', // Cập nhật trạng thái AudioContext
     TAB_SELECTED = 'tab_selected',           // Tab được chọn để xử lý cuộc gọi
     TAB_LIST_UPDATE = 'tab_list_update',     // Cập nhật danh sách tab
 
@@ -243,6 +244,11 @@ export namespace SipWorker {
      * ID của cuộc gọi đang xử lý (nếu có)
      */
     callId?: string;
+
+    /**
+     * Trạng thái AudioContext của tab (running/suspended/closed)
+     */
+    audioContextRunning?: boolean;
 
     /**
      * Cổng kết nối MessagePort đến tab
@@ -761,6 +767,11 @@ export namespace SipWorker {
      * Có phải là cuộc gọi predict không
      */
     isPredictCall?: boolean;
+
+    /**
+     * Có phải là cuộc gọi auto-accept không (for internal use)
+     */
+    isAutoAccept?: boolean;
   }
 
   /**

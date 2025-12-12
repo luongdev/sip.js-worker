@@ -9,6 +9,8 @@ export interface MediaHandlerCallbacks {
   sendSessionFailed: (callId: string, error: string) => void;
   handleRemoteStream: (callId: string, stream: MediaStream) => void;
   sendSdpCache: (callId: string, localSdp: string, remoteSdp: string) => void;
+  getAudioContext?: () => AudioContext | null;
+  ensureAudioContextRunning?: () => Promise<boolean>;
 }
 
 /**
@@ -95,15 +97,26 @@ export class MediaHandler {
    * Handle media request from worker - main entry point like SIP.js getDescription/setDescription
    */
   public async handleMediaRequest(request: SipWorker.MediaRequest): Promise<SipWorker.MediaResponse> {
-    console.log('Handling media request:', request.type, 'for call:', request.callId);
+    console.log('MediaHandler.handleMediaRequest: type =', request.type, ', callId =', request.callId);
+    
+    // Get session state to check signaling state
+    const sessionState = this.sessions.get(request.callId);
+    if (sessionState) {
+      console.log('MediaHandler.handleMediaRequest: Current signaling state =', sessionState.peerConnection.signalingState);
+    } else {
+      console.log('MediaHandler.handleMediaRequest: No existing session for callId', request.callId);
+    }
 
     try {
       switch (request.type) {
         case 'offer':
+          console.log('MediaHandler: Creating OFFER for callId', request.callId);
           return await this.createOfferDescription(request);
         case 'answer':
+          console.log('MediaHandler: Creating ANSWER for callId', request.callId);
           return await this.createAnswerDescription(request);
         case 'set-remote-sdp':
+          console.log('MediaHandler: Setting REMOTE SDP for callId', request.callId);
           return await this.setRemoteDescription(request);
         case 'ice-candidate':
           return await this.addIceCandidate(request);

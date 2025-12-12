@@ -24,6 +24,8 @@ export class SipWorkerClient {
   private tabId: string;
   private connected: boolean = false;
   private messageHandlers: Map<SipWorker.MessageType, Function[]> = new Map();
+  private audioContext: AudioContext | null = null;
+  private audioContextStateChangeHandler: (() => void) | null = null;
 
   // New: ServiceWorker notification support
   private notificationChannel: BroadcastChannel | null = null;
@@ -136,6 +138,12 @@ export class SipWorkerClient {
             remoteSdp
           }
         });
+      },
+      getAudioContext: () => {
+        return this.audioContext;
+      },
+      ensureAudioContextRunning: () => {
+        return this.ensureAudioContextRunning();
       }
     };
 
@@ -146,6 +154,9 @@ export class SipWorkerClient {
 
     // Đăng ký media handlers
     this.registerMediaHandlers();
+
+    // Initialize AudioContext BEFORE worker connection to get correct initial state
+    this.initializeAudioContext();
 
     // New: Khởi tạo ServiceWorker cho notifications
     this.initServiceWorkerNotifications();
@@ -400,8 +411,74 @@ export class SipWorkerClient {
         });
         window.dispatchEvent(notificationEvent);
         break;
+      case 'ACTIVATE_AUDIOCONTEXT':
+        // Handle AudioContext activation request from notification
+        this.handleAudioContextActivation();
+        break;
       default:
         console.log('Unknown ServiceWorker message:', type);
+    }
+  }
+
+  /**
+   * Handle AudioContext activation request from service worker notification
+   */
+  private async handleAudioContextActivation(): Promise<void> {
+    console.log('AudioContext activation requested from notification');
+    
+    try {
+      // Ensure AudioContext is running
+      const success = await this.ensureAudioContextRunning();
+      
+      if (success) {
+        console.log('AudioContext successfully activated from notification');
+        
+        // Emit custom event for external handling
+        const activationEvent = new CustomEvent('sipAudioContextActivated', {
+          detail: { 
+            success: true,
+            source: 'notification',
+            timestamp: Date.now()
+          }
+        });
+        window.dispatchEvent(activationEvent);
+        
+        // Show user feedback (optional)
+        if (typeof (window as any).onSipAudioContextActivated === 'function') {
+          (window as any).onSipAudioContextActivated(true);
+        }
+      } else {
+        console.warn('Failed to activate AudioContext from notification');
+        
+        // Emit failure event
+        const activationEvent = new CustomEvent('sipAudioContextActivated', {
+          detail: { 
+            success: false,
+            source: 'notification',
+            error: 'Failed to activate AudioContext',
+            timestamp: Date.now()
+          }
+        });
+        window.dispatchEvent(activationEvent);
+        
+        // Show user feedback (optional)
+        if (typeof (window as any).onSipAudioContextActivated === 'function') {
+          (window as any).onSipAudioContextActivated(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error activating AudioContext from notification:', error);
+      
+      // Emit error event
+      const activationEvent = new CustomEvent('sipAudioContextActivated', {
+        detail: { 
+          success: false,
+          source: 'notification',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          timestamp: Date.now()
+        }
+      });
+      window.dispatchEvent(activationEvent);
     }
   }
 
@@ -498,7 +575,8 @@ export class SipWorkerClient {
         lastActiveTime: Date.now(),
         createdTime: Date.now(),
         mediaPermission: SipWorker.TabMediaPermission.NOT_REQUESTED,
-        handlingCall: false
+        handlingCall: false,
+        audioContextRunning: this.getAudioContextState()
       }
     });
   }
@@ -722,6 +800,8 @@ export class SipWorkerClient {
       setTimeout(() => {
         this.detectAndUpdateMediaPermission();
         this.setupTabStateTracking();
+        // Report current AudioContext state now that worker is ready
+        this.reportAudioContextState(this.getAudioContextState());
       }, 100); // Small delay to ensure worker is fully ready
     });
 
@@ -830,6 +910,9 @@ export class SipWorkerClient {
         tabId: this.tabId,
         timestamp: Date.now()
       });
+      
+      // Cleanup AudioContext
+      this.cleanupAudioContext();
     });
     
     // Re-register if page becomes visible again after close attempt
@@ -1358,35 +1441,7 @@ export class SipWorkerClient {
     }
   }
 
-  /**
-   * Cleanup resources
-   */
-  public cleanup(): void {
-    this.mediaHandler.cleanup();
 
-    if (this.port) {
-      this.port.close();
-    }
-
-    // Cleanup ServiceWorker resources
-    if (this.notificationChannel) {
-      this.notificationChannel.close();
-      this.notificationChannel = null;
-    }
-
-    // Cleanup keep-alive interval
-    if ((this as any).keepAliveInterval) {
-      clearInterval((this as any).keepAliveInterval);
-      (this as any).keepAliveInterval = null;
-      console.log('Service Worker keep-alive interval cleared');
-    }
-
-    // Cleanup tab close protection
-    this.disableTabCloseProtection();
-
-    this.connected = false;
-    console.log('SipWorkerClient cleaned up');
-  }
 
   /**
    * Kiểm tra trạng thái kết nối
@@ -1523,5 +1578,159 @@ export class SipWorkerClient {
         data: config
       });
     });
+  }
+
+  /**
+   * Get current AudioContext state
+   * @returns boolean indicating if AudioContext is running
+   */
+  private getAudioContextState(): boolean {
+    if (!this.audioContext) {
+      return false;
+    }
+    return this.audioContext.state === 'running';
+  }
+
+  /**
+   * Initialize AudioContext and setup state tracking
+   */
+  private initializeAudioContext(): void {
+    try {
+      // Create AudioContext if it doesn't exist
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        console.log('AudioContext created, initial state:', this.audioContext.state);
+      }
+
+      // Setup state change listener
+      if (!this.audioContextStateChangeHandler) {
+        this.audioContextStateChangeHandler = () => {
+          const isRunning = this.getAudioContextState();
+          console.log('AudioContext state changed:', this.audioContext?.state, 'running:', isRunning);
+          this.reportAudioContextState(isRunning);
+        };
+
+        this.audioContext.addEventListener('statechange', this.audioContextStateChangeHandler);
+      }
+
+      // Report initial state
+      this.reportAudioContextState(this.getAudioContextState());
+    } catch (error) {
+      console.warn('Failed to initialize AudioContext:', error);
+      this.reportAudioContextState(false);
+    }
+  }
+
+  /**
+   * Report AudioContext state to worker
+   * @param isRunning Whether AudioContext is running
+   */
+  private reportAudioContextState(isRunning: boolean): void {
+    if (!this.connected) {
+      console.log(`AudioContext state ready to report: ${isRunning} (waiting for worker connection)`);
+      return; // Don't send if not connected to worker
+    }
+
+    console.log(`Reporting AudioContext state to worker: ${isRunning}`);
+    this.sendMessage({
+      type: SipWorker.MessageType.TAB_UPDATE_AUDIO_CONTEXT,
+      id: `audio-context-${Date.now()}`,
+      tabId: this.tabId,
+      timestamp: Date.now(),
+      data: {
+        audioContextRunning: isRunning
+      }
+    });
+  }
+
+  /**
+   * Ensure AudioContext is running (resume if suspended)
+   * This is typically called when starting media operations
+   */
+  public async ensureAudioContextRunning(): Promise<boolean> {
+    try {
+      if (!this.audioContext) {
+        this.initializeAudioContext();
+      }
+
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        console.log('Resuming suspended AudioContext...');
+        await this.audioContext.resume();
+        console.log('AudioContext resumed, state:', this.audioContext.state);
+      }
+
+      const isRunning = this.getAudioContextState();
+      this.reportAudioContextState(isRunning);
+      return isRunning;
+    } catch (error) {
+      console.error('Failed to ensure AudioContext is running:', error);
+      this.reportAudioContextState(false);
+      return false;
+    }
+  }
+
+  /**
+   * Get AudioContext instance (create if needed)
+   * @returns AudioContext instance or null if creation failed
+   */
+  public getAudioContext(): AudioContext | null {
+    if (!this.audioContext) {
+      this.initializeAudioContext();
+    }
+    return this.audioContext;
+  }
+
+  /**
+   * Cleanup AudioContext resources
+   */
+  private cleanupAudioContext(): void {
+    if (this.audioContext && this.audioContextStateChangeHandler) {
+      this.audioContext.removeEventListener('statechange', this.audioContextStateChangeHandler);
+      this.audioContextStateChangeHandler = null;
+    }
+
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(error => {
+        console.warn('Error closing AudioContext:', error);
+      });
+    }
+
+    this.audioContext = null;
+  }
+
+  /**
+   * Cleanup client resources
+   */
+  public cleanup(): void {
+    // Cleanup MediaHandler
+    this.mediaHandler.cleanup();
+    
+    // Cleanup AudioContext
+    this.cleanupAudioContext();
+    
+    // Clear keepalive interval
+    if ((this as any).keepAliveInterval) {
+      clearInterval((this as any).keepAliveInterval);
+      (this as any).keepAliveInterval = null;
+      console.log('Service Worker keep-alive interval cleared');
+    }
+    
+    // Close notification channel
+    if (this.notificationChannel) {
+      this.notificationChannel.close();
+      this.notificationChannel = null;
+    }
+    
+    // Close worker port
+    if (this.port) {
+      this.port.close();
+      this.port = null;
+    }
+    
+    // Cleanup tab close protection
+    this.disableTabCloseProtection();
+    
+    this.connected = false;
+    console.log('SipWorkerClient cleanup completed');
   }
 }

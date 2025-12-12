@@ -53,7 +53,7 @@ const obfuscationOptions = {
 
 // Files to obfuscate
 const filesToObfuscate = [
-  'dist/sip-worker.worker.js',
+  // 'dist/sip-worker.worker.js',
   'dist/sw.js',
   'public/sw.js'
 ];

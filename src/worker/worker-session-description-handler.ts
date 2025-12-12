@@ -120,22 +120,35 @@ export class WorkerSessionDescriptionHandler implements SDHInterface {
     
     this.logger.debug(`Requesting SDP from tab: ${selectedTab.id} (hold: ${isHoldRequest}, callId: ${this.callId})`);
 
-    // Determine if we need offer or answer based on SIP.js session context
+    // Determine if we need offer or answer based on call direction from WorkerState
+    // This is more reliable than checking session constructor name
     let requestType: 'offer' | 'answer' = 'offer'; // Default to offer
     
-    if (this.session) {
-      // Check if this is an incoming call (Invitation) that needs an answer
+    // First, check call direction from WorkerState (most reliable)
+    if (currentCallInfo.direction === 'incoming') {
+      requestType = 'answer';
+      console.log(`WorkerSDH.getDescription: Detected INCOMING call from WorkerState, will request ANSWER for callId ${this.callId}`);
+    } else if (currentCallInfo.direction === 'outgoing') {
+      requestType = 'offer';
+      console.log(`WorkerSDH.getDescription: Detected OUTGOING call from WorkerState, will request OFFER for callId ${this.callId}`);
+    } else if (this.session) {
+      // Fallback: Check session constructor name
       const sessionConstructorName = this.session.constructor.name;
+      console.log(`WorkerSDH.getDescription: session.constructor.name = ${sessionConstructorName}, callId = ${this.callId}`);
       if (sessionConstructorName === 'Invitation') {
         requestType = 'answer';
-        this.logger.debug(`Detected Invitation session, requesting answer`);
+        console.log(`WorkerSDH.getDescription: Detected Invitation session, will request ANSWER for callId ${this.callId}`);
       } else {
-        this.logger.debug(`Detected ${sessionConstructorName} session, requesting offer`);
+        console.log(`WorkerSDH.getDescription: Detected ${sessionConstructorName} session, will request OFFER for callId ${this.callId}`);
       }
     } else if (options?.action) {
       requestType = options?.action;
-      this.logger.debug(`Detected action: ${requestType}`);
+      console.log(`WorkerSDH.getDescription: Using action from options: ${requestType} for callId ${this.callId}`);
+    } else {
+      console.log(`WorkerSDH.getDescription: No direction info, defaulting to OFFER for callId ${this.callId}`);
     }
+    
+    console.log(`WorkerSDH.getDescription: Final requestType = ${requestType} for callId ${this.callId}`);
     
     // Send media request to tab with hold flag
     const mediaRequest: SipWorker.MediaRequest = {

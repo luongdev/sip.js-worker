@@ -29,8 +29,16 @@ const tabManager = new TabManager(messageBroker, workerState, {
     } else {
       console.error(`Cannot hangup call ${callId}: SipCore not initialized`);
     }
+  },
+  onAudioContextStateChanged: (hasRunningAudioContext: boolean, previousState: boolean) => {
+    if (sipCore) {
+      console.log(`AudioContext state changed: ${previousState} → ${hasRunningAudioContext}`);
+      sipCore.handleAudioContextStateChange(hasRunningAudioContext, previousState);
+    }
   }
 });
+
+
 
 // Cấu hình mặc định
 const defaultConfig: SipCoreOptions = {
@@ -474,7 +482,7 @@ function registerMessageHandlers() {
 
     if (sipCore) {
       // Notify SIP Core that media session is ready
-      // TODO: Implement session ready handling in SipCore
+      // TODO: Implement session ready handling in SipCore if needed
       return { success: true, message: 'Session ready received' };
     }
     return { success: false, error: 'SIP not initialized' };

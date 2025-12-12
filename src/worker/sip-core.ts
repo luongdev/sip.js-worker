@@ -169,6 +169,23 @@ export class SipCore {
   private activeCalls: Map<string, Session> = new Map();
 
   /**
+   * Danh sách các cuộc gọi đang chờ auto-accept
+   */
+  private pendingAutoAcceptCalls: Map<string, boolean> = new Map();
+
+  /**
+   * Clean up call from all tracking maps
+   */
+  private cleanupCall(callId: string): void {
+    this.activeCalls.delete(callId);
+    this.pendingAutoAcceptCalls.delete(callId);
+  }
+
+
+
+
+
+  /**
    * Reconnection state
    */
   private reconnectAttempts: number = 0;
@@ -193,6 +210,12 @@ export class SipCore {
    * BroadcastChannel for ServiceWorker notifications
    */
   private notificationChannel: BroadcastChannel | null = null;
+
+  /**
+   * Last AudioContext notification timestamp (to prevent spam)
+   */
+  private lastAudioContextNotification: number = 0;
+  private audioContextNotificationCooldown: number = 30000; // 30 seconds
 
   constructor(
     messageBroker: MessageBroker,
@@ -588,6 +611,81 @@ export class SipCore {
   }
 
   /**
+   * Send AudioContext notification request to ServiceWorker when no tab has running AudioContext
+   */
+  private sendAudioContextNotificationToServiceWorker(): void {
+    if (!this.notificationChannel) {
+      this.log('warn', 'BroadcastChannel not available, cannot send AudioContext notification to ServiceWorker');
+      return;
+    }
+
+    // Throttle notifications to prevent spam
+    const now = Date.now();
+    if (now - this.lastAudioContextNotification < this.audioContextNotificationCooldown) {
+      this.log('info', `AudioContext notification throttled (last sent ${Math.round((now - this.lastAudioContextNotification) / 1000)}s ago)`);
+      return;
+    }
+
+    const notificationData = {
+      type: 'SHOW_AUDIOCONTEXT_NOTIFICATION',
+      timestamp: now,
+      url: this.getAppUrl()
+    };
+
+    this.notificationChannel.postMessage(notificationData);
+    this.lastAudioContextNotification = now;
+    this.log('info', 'Sent AudioContext notification request to ServiceWorker');
+  }
+
+  /**
+   * Get the application URL for notifications
+   */
+  private getAppUrl(): string {
+    // Try to get URL from any connected tab
+    const allTabs = this.tabManager.getAllTabs();
+    if (allTabs.length > 0 && allTabs[0].url) {
+      return allTabs[0].url;
+    }
+    
+    // Fallback to current origin
+    return self.location.origin;
+  }
+
+  /**
+   * Check if any tab has running AudioContext
+   */
+  private hasTabWithRunningAudioContext(): boolean {
+    const allTabs = this.tabManager.getAllTabs();
+    return allTabs.some(tab => tab.audioContextRunning === true);
+  }
+
+  /**
+   * Handle AudioContext state change (proactive notification)
+   * @param hasRunningAudioContext Current state - any tab has running AudioContext
+   * @param previousState Previous state
+   */
+  public handleAudioContextStateChange(hasRunningAudioContext: boolean, previousState: boolean): void {
+    // Send notification whenever no tab has running AudioContext
+    // Purpose: Always maintain at least 1 tab with running AudioContext
+    if (!hasRunningAudioContext) {
+      const allTabs = this.tabManager.getAllTabs();
+
+      if (allTabs.length > 0) {
+        // Check if this is a state change or periodic check
+        const isStateChange = hasRunningAudioContext !== previousState;
+        const checkType = isStateChange ? 'state change' : 'periodic check';
+        
+        this.log('info', `No tab has running AudioContext (${checkType}) - sending AudioContext notification to maintain audio readiness`);
+        this.sendAudioContextNotificationToServiceWorker();
+      } else {
+        this.log('info', 'No tabs connected - skipping AudioContext notification');
+      }
+    } else {
+      this.log('info', 'AudioContext is running in at least one tab - audio readiness maintained');
+    }
+  }
+
+  /**
    * Xử lý cuộc gọi đến
    * @param invitation Invitation từ SIP.js
    */
@@ -629,17 +727,29 @@ export class SipCore {
       this.workerState.setActiveCall(callId, callInfo);
     }
 
-    // Determine if we should auto-accept this call
+    // Check if we should auto-accept this call
     const shouldAutoAccept = isPredictCall ? this.autoAcceptPredictCalls : this.autoAcceptInboundCalls;
-
+    const selectedTabId = await this.tabManager.selectBestTab();
+    
     if (shouldAutoAccept) {
       this.log('info', `Auto-accepting ${isPredictCall ? 'predict' : 'inbound'} call: ${callId}`);
-      await this.acceptCall(callId);
-      return; // Skip broadcasting and notifications for auto-accepted calls
+      
+      // Update call info with selected tab (needed for media handling)
+      callInfo.handlingTabId = selectedTabId || undefined;
+      if (this.workerState) {
+        this.workerState.setActiveCall(callId, callInfo);
+      }
+      
+      // Auto-accept immediately without broadcasting CALL_INCOMING (no ringing)
+      try {
+        await this.acceptCall(callId);
+      } catch (error: any) {
+        this.log('error', `Failed to auto-accept call ${callId}: ${error.message}`);
+      }
+      return; // Skip the rest of the incoming call handling
     }
 
-    // Only broadcast and send notifications if not auto-accepting
-    const selectedTabId = await this.tabManager.selectBestTab();
+    // For non-auto-accept calls, broadcast the incoming call event
     await this.messageBroker.broadcast({
       type: SipWorker.MessageType.CALL_INCOMING,
       id: `incoming-call-${Date.now()}`,
@@ -656,9 +766,12 @@ export class SipCore {
     );
 
     if (visibleTabs.length === 0) {
-      this.log('info', `All tabs are hidden, sending notification to ServiceWorker for call: ${callId}`);
+      // All tabs are hidden - show incoming call notification
+      this.log('info', `All tabs are hidden, sending call notification to ServiceWorker for call: ${callId}`);
       this.sendNotificationToServiceWorker(callInfo);
     }
+    // AudioContext notifications are now handled independently via handleAudioContextStateChange()
+    // No need to check AudioContext state during incoming calls
   }
 
   /**
@@ -840,7 +953,7 @@ export class SipCore {
               callInfo.endTime = Date.now();
 
               // Cleanup
-              this.activeCalls.delete(callId);
+              this.cleanupCall(callId);
 
               // Broadcast call rejected với SIP status code
               this.messageBroker.broadcast({
@@ -903,7 +1016,7 @@ export class SipCore {
         this.log('error', `Call ${callId} setup failed: ${inviteError.message}`);
 
         // Cleanup
-        this.activeCalls.delete(callId);
+        this.cleanupCall(callId);
 
         // Broadcast call failed
         this.messageBroker.broadcast({
@@ -929,7 +1042,7 @@ export class SipCore {
       this.log('error', `Failed to make call: ${error.message}`);
 
       // Cleanup nếu có lỗi
-      this.activeCalls.delete(callId);
+      this.cleanupCall(callId);
 
       // Broadcast call failed để reset UI
       this.messageBroker.broadcast({
@@ -1033,7 +1146,7 @@ export class SipCore {
       });
 
       // Cleanup
-      this.activeCalls.delete(callId);
+      this.cleanupCall(callId);
 
       this.log('info', `Call ${callId} rejected successfully`);
       return { success: true };
@@ -1078,7 +1191,7 @@ export class SipCore {
         }
       }
 
-      this.activeCalls.delete(callId);
+      this.cleanupCall(callId);
 
       await this.messageBroker.broadcast({
         type: SipWorker.MessageType.CALL_TERMINATED,
@@ -1134,7 +1247,7 @@ export class SipCore {
         case SessionState.Terminated:
           currentCallInfo.state = SipWorker.CallState.TERMINATED;
           currentCallInfo.endTime = Date.now();
-          this.activeCalls.delete(callInfo.id);
+          this.cleanupCall(callInfo.id);
           this.broadcastCallStatus(currentCallInfo);
 
           // Broadcast CALL_TERMINATED để reset UI
@@ -1197,7 +1310,7 @@ export class SipCore {
             }
           }
 
-          this.activeCalls.delete(callInfo.id);
+          this.cleanupCall(callInfo.id);
           this.broadcastCallStatus(currentCallInfo);
 
           // Broadcast CALL_TERMINATED để reset UI với SIP status code

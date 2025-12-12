@@ -24,6 +24,11 @@ export interface TabManagerOptions {
    * Callback được gọi khi cần hangup call do tab đóng
    */
   onTabClosedWithCall?: (callId: string, reason: string) => Promise<void>;
+
+  /**
+   * Callback được gọi khi AudioContext state thay đổi
+   */
+  onAudioContextStateChanged?: (hasRunningAudioContext: boolean, previousState: boolean) => void;
 }
 
 /**
@@ -51,6 +56,11 @@ export class TabManager {
   private selectedTabId: string | null = null;
 
   /**
+   * Trạng thái AudioContext trước đó (để detect thay đổi)
+   */
+  private previousAudioContextState: boolean = false;
+
+  /**
    * Thời gian chờ tối đa để chọn tab xử lý cuộc gọi (ms)
    */
   private tabSelectionTimeout: number = 5000;
@@ -59,6 +69,16 @@ export class TabManager {
    * Callback được gọi khi cần hangup call do tab đóng
    */
   private onTabClosedWithCall?: (callId: string, reason: string) => Promise<void>;
+
+  /**
+   * Callback được gọi khi AudioContext state thay đổi
+   */
+  private onAudioContextStateChanged?: (hasRunningAudioContext: boolean, previousState: boolean) => void;
+
+  /**
+   * Interval ID for periodic AudioContext monitoring
+   */
+  private audioContextMonitoringInterval?: NodeJS.Timeout;
 
   /**
    * Khởi tạo TabManager
@@ -78,8 +98,15 @@ export class TabManager {
       this.onTabClosedWithCall = options.onTabClosedWithCall;
     }
 
+    if (options?.onAudioContextStateChanged) {
+      this.onAudioContextStateChanged = options.onAudioContextStateChanged;
+    }
+
     // Đăng ký các handler xử lý tin nhắn
     this.registerMessageHandlers();
+    
+    // Start periodic AudioContext state checking
+    this.startAudioContextMonitoring();
   }
 
   /**
@@ -108,6 +135,12 @@ export class TabManager {
       const data = message.data as { state: SipWorker.TabState };
       return this.updateTabState(tabId, data.state);
     });
+
+    // Xử lý tin nhắn cập nhật trạng thái AudioContext
+    this.messageBroker.on(SipWorker.MessageType.TAB_UPDATE_AUDIO_CONTEXT, async (message, tabId) => {
+      const data = message.data as { audioContextRunning: boolean };
+      return this.updateTabAudioContext(tabId, data.audioContextRunning);
+    });
   }
 
   /**
@@ -130,6 +163,10 @@ export class TabManager {
       
       this.tabs.set(tabId, updatedTab);
       console.log(`Tab đã cập nhật: ${tabId}`);
+      
+      // Check AudioContext state after tab update (in case audioContextRunning changed)
+      this.checkAudioContextStateAndNotify();
+      
       return { tabInfo: updatedTab, isNewTab: false };
     } else {
       // Tạo thông tin tab mới
@@ -142,11 +179,16 @@ export class TabManager {
         createdTime: Date.now(),
         mediaPermission: tabInfo.mediaPermission || SipWorker.TabMediaPermission.NOT_REQUESTED,
         handlingCall: false,
+        audioContextRunning: tabInfo.audioContextRunning || false,
         port: tabInfo.port
       };
       
       this.tabs.set(tabId, newTab);
       console.log(`Tab mới đã đăng ký: ${tabId}`);
+      
+      // Immediately check AudioContext state after new tab registration
+      this.checkAudioContextStateAndNotify();
+      
       return { tabInfo: newTab, isNewTab: true };
     }
   }
@@ -279,8 +321,8 @@ export class TabManager {
     }
     
     // Tìm tab tốt nhất dựa trên các tiêu chí
-    // 1. Tab đang active và có quyền media
-    // 2. Tab đang visible và có quyền media
+    // 1. Tab có quyền media được cấp (HIGHEST PRIORITY)
+    // 2. Tab có AudioContext đang chạy
     // 3. Tab đang active
     // 4. Tab đang visible
     // 5. Tab được active gần đây nhất
@@ -291,7 +333,7 @@ export class TabManager {
     
     // Sắp xếp theo thứ tự ưu tiên
     tabEntries.sort(([, a], [, b]) => {
-      // Ưu tiên tab có quyền media
+      // 1. Ưu tiên tab có quyền media (HIGHEST PRIORITY)
       if (a.mediaPermission === SipWorker.TabMediaPermission.GRANTED && 
           b.mediaPermission !== SipWorker.TabMediaPermission.GRANTED) {
         return -1;
@@ -301,7 +343,15 @@ export class TabManager {
         return 1;
       }
       
-      // Ưu tiên tab active
+      // 2. Ưu tiên tab có AudioContext đang chạy (SECOND PRIORITY)
+      if (a.audioContextRunning && !b.audioContextRunning) {
+        return -1;
+      }
+      if (!a.audioContextRunning && b.audioContextRunning) {
+        return 1;
+      }
+      
+      // 3. Ưu tiên tab active
       if (a.state === SipWorker.TabState.ACTIVE && b.state !== SipWorker.TabState.ACTIVE) {
         return -1;
       }
@@ -309,7 +359,7 @@ export class TabManager {
         return 1;
       }
       
-      // Ưu tiên tab visible
+      // 4. Ưu tiên tab visible
       if (a.state === SipWorker.TabState.VISIBLE && b.state !== SipWorker.TabState.VISIBLE) {
         return -1;
       }
@@ -317,14 +367,40 @@ export class TabManager {
         return 1;
       }
       
-      // Ưu tiên tab được active gần đây nhất
+      // 5. Ưu tiên tab được active gần đây nhất
       return b.lastActiveTime - a.lastActiveTime;
     });
     
     // Chọn tab đầu tiên sau khi sắp xếp
     if (tabEntries.length > 0) {
-      const [tabId] = tabEntries[0];
+      const [tabId, selectedTab] = tabEntries[0];
       this.selectedTabId = tabId;
+      
+      // Log thông tin về việc chọn tab
+      const reasons = [];
+      if (selectedTab.mediaPermission === SipWorker.TabMediaPermission.GRANTED) {
+        reasons.push('media permission granted');
+      }
+      if (selectedTab.audioContextRunning) {
+        reasons.push('AudioContext running');
+      }
+      if (selectedTab.state === SipWorker.TabState.ACTIVE) {
+        reasons.push('tab active');
+      } else if (selectedTab.state === SipWorker.TabState.VISIBLE) {
+        reasons.push('tab visible');
+      }
+      
+      const reasonText = reasons.length > 0 ? ` (${reasons.join(', ')})` : '';
+      console.log(`Selected tab ${tabId}${reasonText}`);
+      
+      if (selectedTab.mediaPermission === SipWorker.TabMediaPermission.GRANTED) {
+        console.log(`Tab ${tabId} has media permission - optimal for call handling`);
+      } else if (selectedTab.audioContextRunning) {
+        console.log(`Tab ${tabId} has running AudioContext but no media permission`);
+      } else {
+        console.log(`Tab ${tabId} selected by fallback criteria - may need media permission`);
+      }
+      
       await this.notifySelectedTab(tabId);
       return tabId;
     }
@@ -398,6 +474,60 @@ export class TabManager {
   }
 
   /**
+   * Cập nhật trạng thái AudioContext của tab
+   * @param tabId ID của tab
+   * @param audioContextRunning Trạng thái AudioContext (running/suspended)
+   * @returns Thông tin đã được cập nhật về tab
+   */
+  public updateTabAudioContext(
+    tabId: string,
+    audioContextRunning: boolean
+  ): SipWorker.TabInfo | null {
+    // Kiểm tra xem tab có tồn tại không
+    const tab = this.tabs.get(tabId);
+    
+    if (!tab) {
+      console.warn(`Tab không tồn tại: ${tabId}`);
+      return null;
+    }
+    
+    // Cập nhật trạng thái AudioContext
+    tab.audioContextRunning = audioContextRunning;
+    console.log(`Tab ${tabId} đã cập nhật trạng thái AudioContext: ${audioContextRunning ? 'running' : 'suspended'}`);
+    
+    // Immediately check AudioContext state and notify if needed
+    this.checkAudioContextStateAndNotify();
+    
+    return tab;
+  }
+
+  /**
+   * Kiểm tra và thông báo thay đổi trạng thái AudioContext tổng thể
+   */
+  private checkAndNotifyAudioContextStateChange(): void {
+    const currentState = this.hasTabWithRunningAudioContext();
+    
+    if (currentState !== this.previousAudioContextState) {
+      console.log(`AudioContext state changed: ${this.previousAudioContextState} → ${currentState}`);
+      
+      // Call callback if registered
+      if (this.onAudioContextStateChanged) {
+        this.onAudioContextStateChanged(currentState, this.previousAudioContextState);
+      }
+      
+      // Update previous state
+      this.previousAudioContextState = currentState;
+    }
+  }
+
+  /**
+   * Kiểm tra xem có tab nào có AudioContext đang chạy không
+   */
+  private hasTabWithRunningAudioContext(): boolean {
+    return Array.from(this.tabs.values()).some(tab => tab.audioContextRunning === true);
+  }
+
+  /**
    * Cập nhật trạng thái xử lý cuộc gọi của tab
    * @param tabId ID của tab
    * @param handlingCall Có đang xử lý cuộc gọi không
@@ -459,4 +589,55 @@ export class TabManager {
   public getTabCount(): number {
     return this.tabs.size;
   }
+
+  /**
+   * Start periodic AudioContext monitoring
+   * Checks AudioContext state every 10 seconds and triggers notifications if needed
+   */
+  private startAudioContextMonitoring(): void {
+    // Check every 10 seconds
+    this.audioContextMonitoringInterval = setInterval(() => {
+      this.checkAudioContextStateAndNotify();
+    }, 10000);
+    
+    console.log('AudioContext monitoring started - checking every 10 seconds');
+  }
+
+  /**
+   * Check current AudioContext state and notify if needed (regardless of previous state)
+   */
+  private checkAudioContextStateAndNotify(): void {
+    const currentState = this.hasTabWithRunningAudioContext();
+    
+    console.log(`Immediate AudioContext check: hasRunningAudioContext=${currentState}`);
+    
+    // Always call callback with current state for immediate checks
+    if (this.onAudioContextStateChanged) {
+      this.onAudioContextStateChanged(currentState, this.previousAudioContextState);
+    }
+    
+    // Don't update previousAudioContextState here to preserve change detection
+    // Only update it in checkAndNotifyAudioContextStateChange()
+  }
+
+  /**
+   * Stop AudioContext monitoring
+   */
+  public stopAudioContextMonitoring(): void {
+    if (this.audioContextMonitoringInterval) {
+      clearInterval(this.audioContextMonitoringInterval);
+      this.audioContextMonitoringInterval = undefined;
+      console.log('AudioContext monitoring stopped');
+    }
+  }
+
+  /**
+   * Cleanup resources
+   */
+  public cleanup(): void {
+    this.stopAudioContextMonitoring();
+    this.tabs.clear();
+  }
+
+
 } 

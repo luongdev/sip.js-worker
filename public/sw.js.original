@@ -34,6 +34,8 @@ notificationChannel.addEventListener('message', async (event) => {
 
   if (type === 'SHOW_CALL_NOTIFICATION') {
     await showCallNotification(callId, callerInfo, url);
+  } else if (type === 'SHOW_AUDIOCONTEXT_NOTIFICATION') {
+    await showAudioContextNotification(url);
   }
 });
 
@@ -82,6 +84,44 @@ async function showCallNotification(callId, callerInfo, url) {
 }
 
 /**
+ * Show AudioContext notification when no tab has running AudioContext
+ */
+async function showAudioContextNotification(url) {
+  try {
+    const notificationOptions = {
+      body: 'Your audio was suspended. Click to reactivate for optimal call quality.',
+      // icon: '/icons/audio-icon-192.png', // Optional: add icon if available
+      // badge: '/icons/badge-icon-72.png', // Optional: add badge if available
+      actions: [
+        {
+          action: 'activate_audio',
+          title: 'Reactivate Audio'
+          // icon: '/icons/audio-icon-32.png' // Optional: add icon if available
+        }
+      ],
+      requireInteraction: true, // Don't auto-dismiss
+      tag: 'sip-audiocontext-warning', // Replace previous notifications with same tag
+      data: {
+        url,
+        type: 'audiocontext_warning',
+        timestamp: Date.now()
+      },
+      vibrate: [100, 50, 100], // Shorter vibration pattern
+      silent: false,
+      renotify: true // Show notification even if same tag exists
+    };
+
+    const registration = await self.registration;
+    await registration.showNotification('Audio Suspended', notificationOptions);
+
+    console.log('ServiceWorker: AudioContext notification shown');
+
+  } catch (error) {
+    console.error('ServiceWorker: Failed to show AudioContext notification:', error);
+  }
+}
+
+/**
  * Handle notification clicks
  */
 self.addEventListener('notificationclick', async (event) => {
@@ -92,6 +132,55 @@ self.addEventListener('notificationclick', async (event) => {
 
   event.notification.close();
 
+  // Handle different notification types
+  const notificationData = event.notification.data;
+  
+  if (notificationData.type === 'audiocontext_warning') {
+    // Handle AudioContext notification click
+    console.log('AudioContext notification clicked');
+    
+    event.waitUntil(
+      clients.matchAll({ type: 'window', includeUncontrolled: true })
+        .then(async clientList => {
+          console.log('Open clients for AudioContext activation:', clientList.map(client => client.url));
+
+          let targetClient = null;
+
+          // Try to focus existing client
+          for (const client of clientList) {
+            if ('focus' in client) {
+              try {
+                await client.focus();
+                targetClient = client;
+                break;
+              } catch (error) {
+                console.error('Error focusing client:', error);
+              }
+            }
+          }
+
+          // Open new window if no existing client
+          if (!targetClient && clients.openWindow) {
+            targetClient = await clients.openWindow(notificationData.url);
+          }
+
+          // Send message to activate AudioContext
+          if (targetClient) {
+            targetClient.postMessage({
+              type: 'ACTIVATE_AUDIOCONTEXT',
+              timestamp: Date.now()
+            });
+          }
+
+          console.log('ServiceWorker: AudioContext activation requested');
+        })
+        .catch(err => console.error('Error in AudioContext notification handler:', err))
+    );
+    
+    return;
+  }
+
+  // Handle call notifications (existing logic)
   // If user clicked notification body (not button), default to answer
   let action = event.action || 'answer';
   const { callId, callerInfo, url } = event.notification.data;
