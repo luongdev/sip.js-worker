@@ -217,6 +217,13 @@ export class SipCore {
   private lastAudioContextNotification: number = 0;
   private audioContextNotificationCooldown: number = 30000; // 30 seconds
 
+  /**
+   * AudioContext notification delay mechanism
+   * Prevents notifications for brief suspensions that quickly resume
+   */
+  private audioContextNotificationTimer: NodeJS.Timeout | null = null;
+  private audioContextNotificationDelay: number = 2000; // 2 seconds delay
+
   constructor(
     messageBroker: MessageBroker,
     tabManager: TabManager,
@@ -638,6 +645,34 @@ export class SipCore {
   }
 
   /**
+   * Schedule delayed AudioContext notification to avoid notifications for brief suspensions
+   * @param checkType Type of check that triggered this
+   */
+  private scheduleDelayedAudioContextNotification(checkType: string): void {
+    // Clear any existing timer
+    if (this.audioContextNotificationTimer) {
+      clearTimeout(this.audioContextNotificationTimer);
+    }
+
+    this.log('info', `No tab has running AudioContext (${checkType}) - scheduling notification in ${this.audioContextNotificationDelay}ms`);
+
+    // Schedule notification after delay
+    this.audioContextNotificationTimer = setTimeout(() => {
+      // Double-check AudioContext state before sending notification
+      const stillNoAudioContext = !this.hasTabWithRunningAudioContext();
+      
+      if (stillNoAudioContext) {
+        this.log('info', `AudioContext still suspended after ${this.audioContextNotificationDelay}ms delay - sending notification`);
+        this.sendAudioContextNotificationToServiceWorker();
+      } else {
+        this.log('info', `AudioContext resumed during delay period - notification cancelled`);
+      }
+      
+      this.audioContextNotificationTimer = null;
+    }, this.audioContextNotificationDelay);
+  }
+
+  /**
    * Get the application URL for notifications
    */
   private getAppUrl(): string {
@@ -665,6 +700,14 @@ export class SipCore {
    * @param previousState Previous state
    */
   public handleAudioContextStateChange(hasRunningAudioContext: boolean, previousState: boolean): void {
+    // Clear any pending notification timer when AudioContext becomes available
+    if (hasRunningAudioContext && this.audioContextNotificationTimer) {
+      clearTimeout(this.audioContextNotificationTimer);
+      this.audioContextNotificationTimer = null;
+      this.log('info', 'AudioContext became available - cancelled pending notification');
+      return;
+    }
+
     // Send notification whenever no tab has running AudioContext
     // Purpose: Always maintain at least 1 tab with running AudioContext
     if (!hasRunningAudioContext) {
@@ -675,8 +718,14 @@ export class SipCore {
         const isStateChange = hasRunningAudioContext !== previousState;
         const checkType = isStateChange ? 'state change' : 'periodic check';
         
-        this.log('info', `No tab has running AudioContext (${checkType}) - sending AudioContext notification to maintain audio readiness`);
-        this.sendAudioContextNotificationToServiceWorker();
+        // For state changes, use delay to avoid notifications for brief suspensions
+        // For periodic checks, send immediately (user has been without audio for a while)
+        if (isStateChange) {
+          this.scheduleDelayedAudioContextNotification(checkType);
+        } else {
+          this.log('info', `No tab has running AudioContext (${checkType}) - sending immediate AudioContext notification`);
+          this.sendAudioContextNotificationToServiceWorker();
+        }
       } else {
         this.log('info', 'No tabs connected - skipping AudioContext notification');
       }
@@ -1616,6 +1665,9 @@ export class SipCore {
 
     // Stop custom refresh timer
     this.stopCustomRefreshTimer();
+    
+    // Stop AudioContext notification timer
+    this.stopAudioContextNotificationTimer();
 
     if (!this.registerer) {
       const error = 'Cannot unregister: Not registered';
@@ -2510,6 +2562,17 @@ export class SipCore {
   }
 
   /**
+   * Stop AudioContext notification timer
+   */
+  private stopAudioContextNotificationTimer(): void {
+    if (this.audioContextNotificationTimer) {
+      clearTimeout(this.audioContextNotificationTimer);
+      this.audioContextNotificationTimer = null;
+      this.log('info', '🔔 AudioContext notification timer STOPPED');
+    }
+  }
+
+  /**
    * Perform custom refresh (manual re-registration)
    */
   private async performCustomRefresh(): Promise<void> {
@@ -2621,6 +2684,7 @@ export class SipCore {
           this.registered = false;
           this.log('info', 'SIP unregistered');
           this.stopCustomRefreshTimer();
+          this.stopAudioContextNotificationTimer();
           this.broadcastRegistrationState(false);
           break;
         default:
