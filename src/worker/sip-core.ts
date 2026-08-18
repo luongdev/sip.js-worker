@@ -23,6 +23,7 @@ import {
 } from 'sip.js';
 import { v7 as uuidv7 } from 'uuid';
 import { WorkerState } from './worker-state';
+import { LenientTransport } from './lenient-transport';
 
 // Định nghĩa LogLevel theo đúng định nghĩa từ sip.js
 type LogLevel = "debug" | "log" | "warn" | "error";
@@ -477,6 +478,7 @@ export class SipCore {
       const userAgentOptions: UserAgentOptions = {
         uri,
         transportOptions,
+        transportConstructor: LenientTransport,
         authorizationUsername: this.sipConfig.username,
         authorizationPassword: this.sipConfig.password,
         displayName: this.sipConfig.displayName,
